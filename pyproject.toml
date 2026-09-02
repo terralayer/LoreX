@@ -9,8 +9,11 @@ description = "Self-hosted audiobook Usenet indexer, downloader, and library"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "alembic>=1.16,<2",
   "fastapi>=0.116,<1",
+  "psycopg[binary]>=3.2,<4",
   "pydantic>=2.11,<3",
+  "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.35,<1",
 ]
 

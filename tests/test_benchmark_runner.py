@@ -29,6 +29,8 @@ def test_smoke_suite_has_stable_schema_and_scenarios(tmp_path) -> None:
         "queue_roundtrip",
         "mock_downloader",
         "library_importer",
+        "postgres_bulk_index",
+        "postgres_index_lookup",
     ]
     for scenario in report["scenarios"]:
         assert scenario["scale"] > 0
@@ -43,6 +45,8 @@ def test_smoke_suite_has_stable_schema_and_scenarios(tmp_path) -> None:
     assert "# LoreX Performance Baseline" in markdown
     assert "release_search" in markdown
     assert "library_importer" in markdown
+    assert "postgres_bulk_index" in markdown
+    assert "postgres_index_lookup" in markdown
 
 
 def test_frontend_build_size_is_embedded_in_json_and_markdown(tmp_path) -> None:

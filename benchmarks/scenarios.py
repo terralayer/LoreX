@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select, text
 
 from benchmarks.datasets import (
     generate_download_results,
@@ -13,11 +15,14 @@ from benchmarks.datasets import (
     search_term,
 )
 from benchmarks.metrics import BenchmarkResult, measure_samples
+from lorex.db import create_engine_from_url, session_factory
+from lorex.db_models import ReleaseRow
 from lorex.downloader.mock import MockDownloader
 from lorex.indexer.classifier import classify_audiobook
 from lorex.indexer.grouping import group_headers
 from lorex.library.importer import LibraryImporter
 from lorex.main import create_app
+from lorex.postgres_repository import PostgresReleaseRepository
 from lorex.repository import LibraryRepository, ReleaseRepository
 from lorex.services.indexing import IndexBatch, index_batches
 
@@ -177,6 +182,75 @@ def benchmark_library_importer(scale: int, samples: int) -> dict[str, Any]:
     return _result("library_importer", scale, "imports", scale, timing)
 
 
+def _postgres_repository() -> tuple[Any, PostgresReleaseRepository]:
+    database_url = os.environ.get("LOREX_DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("LOREX_DATABASE_URL is required for PostgreSQL benchmarks")
+    engine = create_engine_from_url(database_url)
+    return engine, PostgresReleaseRepository(session_factory(engine))
+
+
+def _truncate_postgres_releases(engine: Any) -> None:
+    with engine.begin() as connection:
+        connection.execute(text("TRUNCATE release_articles, indexer_checkpoints, releases RESTART IDENTITY CASCADE"))
+
+
+def benchmark_postgres_bulk_index(scale: int, samples: int) -> dict[str, Any]:
+    if samples != 1:
+        raise ValueError("postgres_bulk_index uses one measured sample to avoid replaying identical rows")
+    releases = list(populate_releases(scale, seed=3303)._items.values())
+    records = [(release, ()) for release in releases]
+    engine, repository = _postgres_repository()
+    _truncate_postgres_releases(engine)
+
+    try:
+        def operation() -> int:
+            return repository.commit_index_batch(records)
+
+        timing = measure_samples("postgres_bulk_index", operation, samples=1, warmups=0)
+    finally:
+        engine.dispose()
+
+    return _result(
+        "postgres_bulk_index",
+        scale,
+        "releases",
+        scale,
+        timing,
+        note="Single PostgreSQL transaction using bulk INSERT .. ON CONFLICT; excludes synthetic fixture generation.",
+    )
+
+
+def benchmark_postgres_index_lookup(scale: int, samples: int) -> dict[str, Any]:
+    seed = 4404
+    releases = list(populate_releases(scale, seed=seed)._items.values())
+    needle = " ".join(releases[-1].title.casefold().split())
+    engine, repository = _postgres_repository()
+    _truncate_postgres_releases(engine)
+    repository.commit_index_batch([(release, ()) for release in releases])
+    sessions = session_factory(engine)
+
+    try:
+        def operation() -> int:
+            with sessions() as session:
+                return session.execute(
+                    select(ReleaseRow.id).where(ReleaseRow.normalized_title == needle)
+                ).scalar_one()
+
+        timing = measure_samples("postgres_index_lookup", operation, samples=samples, warmups=1)
+    finally:
+        engine.dispose()
+
+    return _result(
+        "postgres_index_lookup",
+        scale,
+        "releases",
+        1,
+        timing,
+        note="Exact normalized-title point lookup through ix_releases_normalized_title; PR 4 owns full search API redesign.",
+    )
+
+
 ScenarioFunction = Callable[[int, int], dict[str, Any]]
 
 SCENARIOS: dict[str, ScenarioFunction] = {
@@ -187,4 +261,6 @@ SCENARIOS: dict[str, ScenarioFunction] = {
     "queue_roundtrip": benchmark_queue_roundtrip,
     "mock_downloader": benchmark_mock_downloader,
     "library_importer": benchmark_library_importer,
+    "postgres_bulk_index": benchmark_postgres_bulk_index,
+    "postgres_index_lookup": benchmark_postgres_index_lookup,
 }

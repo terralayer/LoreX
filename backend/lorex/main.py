@@ -2,26 +2,44 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import FastAPI
+from sqlalchemy import Engine
 
 from lorex.api.library import router as library_router
 from lorex.api.releases import router as releases_router
+from lorex.db import create_engine_from_url, database_url_from_env, session_factory
 from lorex.downloader.mock import MockDownloader
 from lorex.library.importer import LibraryImporter
+from lorex.postgres_repository import PostgresJobRepository, PostgresLibraryRepository, PostgresReleaseRepository
 from lorex.repository import JobRepository, LibraryRepository, ReleaseRepository
 
 
 @dataclass(slots=True)
 class AppContainer:
-    releases: ReleaseRepository
-    jobs: JobRepository
-    library: LibraryRepository
+    releases: Any
+    jobs: Any
+    library: Any
     downloader: MockDownloader
     importer: LibraryImporter
+    engine: Engine | None = None
 
     @classmethod
-    def build(cls) -> "AppContainer":
+    def build(cls, database_url: str | None = None) -> "AppContainer":
+        if database_url:
+            engine = create_engine_from_url(database_url)
+            sessions = session_factory(engine)
+            library = PostgresLibraryRepository(sessions)
+            return cls(
+                releases=PostgresReleaseRepository(sessions),
+                jobs=PostgresJobRepository(sessions),
+                library=library,
+                downloader=MockDownloader(),
+                importer=LibraryImporter(library),
+                engine=engine,
+            )
+
         library = LibraryRepository()
         return cls(
             releases=ReleaseRepository(),
@@ -31,11 +49,19 @@ class AppContainer:
             importer=LibraryImporter(library),
         )
 
+    def close(self) -> None:
+        if self.engine is not None:
+            self.engine.dispose()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.container = AppContainer.build()
-    yield
+    container = AppContainer.build(database_url_from_env())
+    app.state.container = container
+    try:
+        yield
+    finally:
+        container.close()
 
 
 def create_app() -> FastAPI:

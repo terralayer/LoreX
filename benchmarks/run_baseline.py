@@ -21,6 +21,8 @@ _PROFILE_CONFIGS: dict[str, list[tuple[str, int, int]]] = {
         ("queue_roundtrip", 20, 1),
         ("mock_downloader", 20, 1),
         ("library_importer", 20, 1),
+        ("postgres_bulk_index", 100, 1),
+        ("postgres_index_lookup", 1_000, 3),
     ],
     "ci": [
         ("index_headers", 10_000, 2),
@@ -35,6 +37,8 @@ _PROFILE_CONFIGS: dict[str, list[tuple[str, int, int]]] = {
         ("queue_roundtrip", 10_000, 2),
         ("mock_downloader", 10_000, 2),
         ("library_importer", 10_000, 2),
+        ("postgres_bulk_index", 10_000, 1),
+        ("postgres_index_lookup", 10_000, 10),
     ],
 }
 
@@ -65,6 +69,7 @@ def run_suite(profile: str) -> dict[str, Any]:
             "Synthetic data is generated deterministically from fixed seeds.",
             "Queue scale is bounded because the current baseline uses list pop(0) for FIFO removal.",
             "The read-API scenario uses release search because a dashboard aggregate endpoint does not yet exist.",
+            "PR 3 PostgreSQL scenarios run against the CI PostgreSQL 16 service after Alembic migrations.",
         ],
     }
 
