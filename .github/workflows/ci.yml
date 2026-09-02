@@ -90,7 +90,11 @@ jobs:
       - name: Build frontend
         run: npm --prefix frontend run build
       - name: Run benchmark baseline
-        run: python -m benchmarks.run_baseline --profile ci --output benchmark-results --frontend-dist frontend/dist
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p benchmark-results
+          python -m benchmarks.run_baseline --profile ci --output benchmark-results --frontend-dist frontend/dist 2>&1 | tee benchmark-results/runner.log
       - name: Publish benchmark summary
         if: always() && hashFiles('benchmark-results/baseline.md') != ''
         run: cat benchmark-results/baseline.md >> "$GITHUB_STEP_SUMMARY"
