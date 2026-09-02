@@ -28,4 +28,17 @@ def build_nzb(candidate: ReleaseCandidate) -> str:
 
 
 def get_or_build_nzb(release_id: str, repository: ReleaseRepository) -> str:
-    raise NotImplementedError
+    cached = repository.get_cached_nzb(release_id)
+    if cached is not None:
+        return cached
+
+    release = repository.get(release_id)
+    if release is None:
+        raise KeyError(release_id)
+
+    articles = repository.get_articles(release_id)
+    if not articles:
+        raise KeyError(f"no article references for release {release_id}")
+
+    candidate = ReleaseCandidate(subject_stem=release.source_subject, headers=list(articles))
+    return repository.cache_nzb(release_id, build_nzb(candidate))
