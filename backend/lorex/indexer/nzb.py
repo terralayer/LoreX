@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 from lorex.domain import ReleaseCandidate
+
+if TYPE_CHECKING:
+    from lorex.repository import ReleaseRepository
 
 _NZB_NS = "http://www.newzbin.com/DTD/2003/nzb"
 
@@ -21,3 +25,7 @@ def build_nzb(candidate: ReleaseCandidate) -> str:
         segment.text = header.message_id.strip("<>")
 
     return tostring(root, encoding="unicode", xml_declaration=True)
+
+
+def get_or_build_nzb(release_id: str, repository: ReleaseRepository) -> str:
+    raise NotImplementedError
