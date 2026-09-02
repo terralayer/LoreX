@@ -39,7 +39,7 @@ LoreX is in initial development. The first milestone is a tested vertical slice:
 
 `mock NNTP headers → audiobook release → search → mocked download → import → library`
 
-The project will use red-green testing and will not begin broad production backfill until that vertical slice passes end-to-end tests.
+The project uses red-green testing and a measurement-first optimization program. The first reproducible performance reference is documented in [`docs/performance/baseline-0.1.1-alpha.md`](docs/performance/baseline-0.1.1-alpha.md). Performance changes must compare against the benchmark harness with fresh evidence rather than relying on subjective speed claims.
 
 ## Legal use
 
