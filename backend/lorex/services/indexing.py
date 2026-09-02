@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from pathlib import Path
 
 from lorex.domain import ArticleHeader, IndexCheckpoint, IndexedRelease, ReleaseCandidate
 from lorex.indexer.classifier import classify_audiobook
 from lorex.indexer.grouping import StreamingHeaderGrouper
 from lorex.repository import ReleaseRepository
 
-_EXTENSION = re.compile(r"\.(m4b|m4a|mp3|flac|aac)$", re.IGNORECASE)
+_AUDIO_FORMATS = {"m4b", "m4a", "mp3", "flac", "aac"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,8 +27,14 @@ class IndexingStats:
 
 
 def _parse_identity(subject: str) -> tuple[str, str, str | None, str]:
-    fmt = Path(subject).suffix.lower().lstrip(".") or "unknown"
-    clean = _EXTENSION.sub("", subject).strip()
+    stem, separator, suffix = subject.rpartition(".")
+    if separator:
+        fmt = suffix.casefold() or "unknown"
+        clean = stem.strip() if fmt in _AUDIO_FORMATS else subject.strip()
+    else:
+        fmt = "unknown"
+        clean = subject.strip()
+
     parts = [part.strip() for part in clean.split(" - ") if part.strip()]
     if len(parts) >= 3:
         return parts[0], parts[1], parts[2], fmt
