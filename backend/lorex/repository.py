@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Iterable
 
-from lorex.domain import DownloadJob, IndexedRelease, LibraryBook
+from lorex.domain import ArticleHeader, DownloadJob, IndexCheckpoint, IndexedRelease, LibraryBook
 
 
 @dataclass(slots=True)
 class ReleaseRepository:
     _items: dict[str, IndexedRelease] = field(default_factory=dict)
+    _articles: dict[str, tuple[ArticleHeader, ...]] = field(default_factory=dict)
+    _checkpoints: dict[tuple[str, str], IndexCheckpoint] = field(default_factory=dict)
+    _nzb_cache: dict[str, str] = field(default_factory=dict)
 
     def add(self, release: IndexedRelease) -> IndexedRelease:
         self._items[release.id] = release
@@ -15,6 +19,26 @@ class ReleaseRepository:
 
     def get(self, release_id: str) -> IndexedRelease | None:
         return self._items.get(release_id)
+
+    def commit_index_batch(
+        self,
+        records: Iterable[tuple[IndexedRelease, tuple[ArticleHeader, ...]]],
+        checkpoint: IndexCheckpoint | None = None,
+    ) -> int:
+        return 0
+
+    def get_checkpoint(self, source: str, group: str) -> IndexCheckpoint | None:
+        return self._checkpoints.get((source, group))
+
+    def get_articles(self, release_id: str) -> tuple[ArticleHeader, ...]:
+        return self._articles.get(release_id, ())
+
+    def get_cached_nzb(self, release_id: str) -> str | None:
+        return self._nzb_cache.get(release_id)
+
+    def cache_nzb(self, release_id: str, nzb: str) -> str:
+        self._nzb_cache[release_id] = nzb
+        return nzb
 
     def search(self, query: str) -> list[IndexedRelease]:
         needle = query.casefold().strip()
