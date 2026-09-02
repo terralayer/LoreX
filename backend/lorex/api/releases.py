@@ -32,7 +32,7 @@ def mock_index(payload: MockIndexRequest, request: Request) -> dict:
 
 
 @router.get("/releases/search")
-def search_releases(q: str = "", request: Request = None) -> dict:
+def search_releases(request: Request, q: str = "") -> dict:
     container = request.app.state.container
     results = container.releases.search(q)
     return {"count": len(results), "results": [asdict(item) for item in results]}
