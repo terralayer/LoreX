@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Callable
 
 from lorex.domain import ArticleHeader, ReleaseCandidate
-
-_PART_SUFFIX = re.compile(r"\s*\[\s*(\d+)\s*/\s*(\d+)\s*\]\s*$", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,29 +15,42 @@ class NormalizedHeader:
     total_parts: int | None
 
 
+def _split_part_suffix(subject: str) -> tuple[str, int | None, int | None]:
+    stripped = subject.rstrip()
+    if not stripped.endswith("]"):
+        return subject.strip(), None, None
+
+    opening = stripped.rfind("[")
+    if opening < 0:
+        return subject.strip(), None, None
+
+    token = stripped[opening + 1 : -1]
+    left, separator, right = token.partition("/")
+    if not separator or "/" in right:
+        return subject.strip(), None, None
+
+    left = left.strip()
+    right = right.strip()
+    if not left.isdigit() or not right.isdigit():
+        return subject.strip(), None, None
+
+    subject_stem = stripped[:opening].rstrip()
+    part_number = int(left)
+    total_parts = int(right)
+    if part_number < 1 or total_parts < 1 or part_number > total_parts:
+        return subject_stem, None, None
+    return subject_stem, part_number, total_parts
+
+
 def normalize_subject(subject: str) -> str:
-    return _PART_SUFFIX.sub("", subject).strip()
+    return _split_part_suffix(subject)[0]
 
 
 def normalize_header(header: ArticleHeader) -> NormalizedHeader:
-    match = _PART_SUFFIX.search(header.subject)
-    if match is None:
-        return NormalizedHeader(
-            header=header,
-            subject_stem=header.subject.strip(),
-            part_number=None,
-            total_parts=None,
-        )
-
-    part_number = int(match.group(1))
-    total_parts = int(match.group(2))
-    if part_number < 1 or total_parts < 1 or part_number > total_parts:
-        part_number = None
-        total_parts = None
-
+    subject_stem, part_number, total_parts = _split_part_suffix(header.subject)
     return NormalizedHeader(
         header=header,
-        subject_stem=header.subject[: match.start()].strip(),
+        subject_stem=subject_stem,
         part_number=part_number,
         total_parts=total_parts,
     )
