@@ -1,0 +1,16 @@
+FROM node:20-alpine AS frontend-build
+WORKDIR /src/frontend
+COPY frontend/package.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
+FROM python:3.12-slim
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY backend/ ./backend/
+RUN pip install --no-cache-dir .
+COPY --from=frontend-build /src/frontend/dist ./frontend-dist
+RUN mkdir -p /config /downloads /library
+EXPOSE 8000
+CMD ["uvicorn", "lorex.main:app", "--host", "0.0.0.0", "--port", "8000"]
