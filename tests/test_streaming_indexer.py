@@ -1,5 +1,7 @@
 import pytest
 
+import lorex.indexer.nzb as nzb
+import lorex.services.indexing as indexing
 from lorex.domain import ArticleHeader, IndexCheckpoint, IndexedRelease
 from lorex.indexer.grouping import StreamingHeaderGrouper, normalize_header
 from lorex.repository import ReleaseRepository
@@ -127,3 +129,10 @@ def test_commit_index_batch_deduplicates_live_backfill_overlap():
 
     assert len(repository._items) == 1
     assert repository.get_articles(release.id) == articles
+
+
+def test_streaming_indexing_and_lazy_nzb_api_exists():
+    assert hasattr(indexing, "IndexBatch")
+    assert hasattr(indexing, "IndexingStats")
+    assert hasattr(indexing, "index_batches")
+    assert hasattr(nzb, "get_or_build_nzb")
