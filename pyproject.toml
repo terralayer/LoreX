@@ -27,6 +27,6 @@ package-dir = {"" = "backend"}
 where = ["backend"]
 
 [tool.pytest.ini_options]
-pythonpath = ["backend"]
+pythonpath = ["backend", "."]
 testpaths = ["tests"]
 addopts = "-ra"
