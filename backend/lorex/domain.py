@@ -12,6 +12,13 @@ class ArticleHeader:
     group: str = "alt.binaries.audiobooks"
 
 
+@dataclass(frozen=True, slots=True)
+class IndexCheckpoint:
+    source: str
+    group: str
+    article_number: int
+
+
 @dataclass(slots=True)
 class ReleaseCandidate:
     subject_stem: str
