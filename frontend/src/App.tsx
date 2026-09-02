@@ -46,7 +46,7 @@ function App() {
           <p><span>Newshosting</span><b className="ok">98.7%</b></p>
           <p><span>Eweka</span><b className="ok">95.3%</b></p>
         </div>
-        <div className="sidebar-foot">Light <span>v0.1.0</span></div>
+        <div className="sidebar-foot">Light <span>v0.0.1</span></div>
       </aside>
 
       <main>
