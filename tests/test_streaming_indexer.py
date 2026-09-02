@@ -1,10 +1,10 @@
 import pytest
 
-import lorex.indexer.nzb as nzb
-import lorex.services.indexing as indexing
 from lorex.domain import ArticleHeader, IndexCheckpoint, IndexedRelease
 from lorex.indexer.grouping import StreamingHeaderGrouper, normalize_header
+from lorex.indexer.nzb import get_or_build_nzb
 from lorex.repository import ReleaseRepository
+from lorex.services.indexing import IndexBatch, index_batches
 
 
 def _header(part: int, total: int, *, book: str = "Project Hail Mary", message: str | None = None) -> ArticleHeader:
@@ -131,8 +131,71 @@ def test_commit_index_batch_deduplicates_live_backfill_overlap():
     assert repository.get_articles(release.id) == articles
 
 
-def test_streaming_indexing_and_lazy_nzb_api_exists():
-    assert hasattr(indexing, "IndexBatch")
-    assert hasattr(indexing, "IndexingStats")
-    assert hasattr(indexing, "index_batches")
-    assert hasattr(nzb, "get_or_build_nzb")
+def test_index_batches_streams_across_batches_commits_checkpoint_and_keeps_nzb_lazy():
+    repository = ReleaseRepository()
+    inspected = []
+    group = "alt.binaries.audiobooks"
+    headers = tuple(_header(part, 3) for part in range(1, 4))
+    checkpoint = IndexCheckpoint("backfill", group, 123456)
+
+    stats = index_batches(
+        [
+            IndexBatch(headers=headers[:2]),
+            IndexBatch(headers=headers[2:], checkpoint=checkpoint),
+        ],
+        repository,
+        max_pending_groups=8,
+        inspect_candidate=inspected.append,
+    )
+
+    assert stats.headers_received == 3
+    assert stats.candidates_completed == 1
+    assert stats.releases_indexed == 1
+    assert stats.releases_rejected == 0
+    assert stats.duplicate_releases == 0
+    assert len(inspected) == 1
+
+    release = next(iter(repository._items.values()))
+    assert release.title == "Project Hail Mary"
+    assert release.author == "Andy Weir"
+    assert release.narrator == "Ray Porter"
+    assert release.nzb == ""
+    assert repository.get_articles(release.id) == headers
+    assert repository.get_checkpoint("backfill", group) == checkpoint
+
+
+def test_index_batches_replay_counts_overlap_as_duplicate():
+    repository = ReleaseRepository()
+    group = "alt.binaries.audiobooks"
+    headers = tuple(_header(part, 3) for part in range(1, 4))
+    batches = [
+        IndexBatch(headers=headers[:2]),
+        IndexBatch(headers=headers[2:], checkpoint=IndexCheckpoint("backfill", group, 100)),
+    ]
+
+    first = index_batches(batches, repository, max_pending_groups=8)
+    second = index_batches(batches, repository, max_pending_groups=8)
+
+    assert first.releases_indexed == 1
+    assert first.duplicate_releases == 0
+    assert second.releases_indexed == 0
+    assert second.duplicate_releases == 1
+    assert len(repository._items) == 1
+
+
+def test_get_or_build_nzb_builds_once_from_persisted_articles_then_uses_cache():
+    repository = ReleaseRepository()
+    headers = tuple(_header(part, 3) for part in range(1, 4))
+    index_batches([IndexBatch(headers=headers)], repository, max_pending_groups=8)
+    release = next(iter(repository._items.values()))
+
+    first = get_or_build_nzb(release.id, repository)
+
+    assert first.startswith("<?xml")
+    assert repository.get_cached_nzb(release.id) == first
+    for header in headers:
+        assert header.message_id.strip("<>") in first
+
+    repository._articles.clear()
+    second = get_or_build_nzb(release.id, repository)
+    assert second == first
