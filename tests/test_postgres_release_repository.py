@@ -83,3 +83,12 @@ def test_nzb_cache_is_durable(repository):
     repository.cache_nzb("release-1", "<nzb />")
 
     assert repository.get_cached_nzb("release-1") == "<nzb />"
+
+
+def test_large_release_batch_is_chunked_below_postgres_parameter_limit(repository):
+    records = [(_release(f"release-{index}"), ()) for index in range(4000)]
+
+    inserted = repository.commit_index_batch(records)
+
+    assert inserted == 4000
+    assert repository.get("release-3999") == _release("release-3999")
