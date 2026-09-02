@@ -23,4 +23,6 @@ def classify_audiobook(candidate: ReleaseCandidate) -> float:
     if any(term in subject for term in _NEGATIVE_TERMS):
         score -= 0.8
 
-    return max(0.0, min(1.0, score))
+    # Classification thresholds are decimal policy values; normalize tiny
+    # binary floating-point artifacts before applying those thresholds.
+    return round(max(0.0, min(1.0, score)), 3)
