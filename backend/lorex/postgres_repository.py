@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -15,9 +15,19 @@ from lorex.db_models import (
 )
 from lorex.domain import ArticleHeader, DownloadJob, IndexCheckpoint, IndexedRelease, LibraryBook
 
+_POSTGRES_BIND_BUDGET = 60_000
+_RELEASE_BIND_COLUMNS = 13
+_ARTICLE_BIND_COLUMNS = 5
+
 
 def _normalize(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def _chunks[T](values: list[T], columns_per_row: int) -> Iterator[list[T]]:
+    chunk_size = max(1, _POSTGRES_BIND_BUDGET // columns_per_row)
+    for offset in range(0, len(values), chunk_size):
+        yield values[offset : offset + chunk_size]
 
 
 def _release_values(release: IndexedRelease) -> dict[str, object]:
@@ -105,13 +115,15 @@ class PostgresReleaseRepository:
 
             inserted_ids: set[str] = set()
             if batch:
-                statement = (
-                    pg_insert(ReleaseRow)
-                    .values([_release_values(release) for release, _ in batch])
-                    .on_conflict_do_nothing()
-                    .returning(ReleaseRow.id)
-                )
-                inserted_ids = set(session.execute(statement).scalars())
+                release_values = [_release_values(release) for release, _ in batch]
+                for release_chunk in _chunks(release_values, _RELEASE_BIND_COLUMNS):
+                    statement = (
+                        pg_insert(ReleaseRow)
+                        .values(release_chunk)
+                        .on_conflict_do_nothing()
+                        .returning(ReleaseRow.id)
+                    )
+                    inserted_ids.update(session.execute(statement).scalars())
 
                 article_values = [
                     {
@@ -125,10 +137,10 @@ class PostgresReleaseRepository:
                     if release.id in inserted_ids
                     for article in articles
                 ]
-                if article_values:
+                for article_chunk in _chunks(article_values, _ARTICLE_BIND_COLUMNS):
                     session.execute(
                         pg_insert(ReleaseArticleRow)
-                        .values(article_values)
+                        .values(article_chunk)
                         .on_conflict_do_nothing(index_elements=[ReleaseArticleRow.message_id])
                     )
 
