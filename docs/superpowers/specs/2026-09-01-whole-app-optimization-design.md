@@ -6,7 +6,7 @@ Approved and locked on 2026-09-01.
 
 ## Goal
 
-Make LoreX fast, predictable, and resource-efficient from version `0.0.1` onward by requiring measurement-backed optimization across indexing, persistence/search, downloader/import processing, metadata access, and the web UI.
+Make LoreX fast, predictable, and resource-efficient from version `0.1.1 alpha` onward by requiring measurement-backed optimization across indexing, persistence/search, downloader/import processing, metadata access, and the web UI.
 
 LoreX must not claim an optimization is complete unless the intended performance metric improves on a fresh benchmark without introducing unacceptable regressions elsewhere.
 
@@ -21,7 +21,7 @@ LoreX must not claim an optimization is complete unless the intended performance
 7. **Generate expensive artifacts lazily.** Full NZB documents are generated and cached on demand rather than eagerly for every accepted release.
 8. **Preserve correctness.** Performance changes use red-green tests and must not weaken deduplication, recovery, verification, sanitization, provider fallback, or metadata confidence rules.
 9. **Serial PR order is mandatory.** Later PRs depend on the measurements and interfaces established by earlier PRs.
-10. **Version remains `0.0.1` during this optimization program unless explicitly changed.**
+10. **Optimization program version is `0.1.1 alpha` unless explicitly changed.** Package-safe forms are Python `0.1.1a1` and npm `0.1.1-alpha.1`; the UI displays `v0.1.1 alpha`.
 
 ## Performance Budgets
 
