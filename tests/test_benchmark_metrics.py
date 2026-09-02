@@ -1,16 +1,27 @@
 from __future__ import annotations
 
-from benchmarks.metrics import BenchmarkResult, measure_samples, percentile
+import importlib
+
+import pytest
+
+
+def _metrics_module():
+    try:
+        return importlib.import_module("benchmarks.metrics")
+    except ModuleNotFoundError as exc:
+        pytest.fail(f"benchmark metrics module is not implemented yet: {exc}")
 
 
 def test_percentile_uses_linear_interpolation() -> None:
+    metrics = _metrics_module()
     values = [1.0, 2.0, 3.0, 4.0]
 
-    assert percentile(values, 0.50) == 2.5
-    assert percentile(values, 0.95) == 3.85
+    assert metrics.percentile(values, 0.50) == 2.5
+    assert metrics.percentile(values, 0.95) == pytest.approx(3.85)
 
 
 def test_measure_samples_returns_stable_machine_readable_fields() -> None:
+    metrics = _metrics_module()
     calls = 0
 
     def operation() -> int:
@@ -18,9 +29,9 @@ def test_measure_samples_returns_stable_machine_readable_fields() -> None:
         calls += 1
         return calls
 
-    result = measure_samples("tiny-operation", operation, samples=3, warmups=1)
+    result = metrics.measure_samples("tiny-operation", operation, samples=3, warmups=1)
 
-    assert isinstance(result, BenchmarkResult)
+    assert isinstance(result, metrics.BenchmarkResult)
     assert calls == 4
     assert result.name == "tiny-operation"
     assert result.sample_count == 3
