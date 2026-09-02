@@ -1,0 +1,42 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      LOREX_DATABASE_URL: postgresql://lorex:lorex@postgres:5432/lorex
+      LOREX_REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./data/config:/config
+      - ./data/downloads:/downloads
+      - ./data/library:/library
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: lorex
+      POSTGRES_USER: lorex
+      POSTGRES_PASSWORD: lorex
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lorex -d lorex"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:

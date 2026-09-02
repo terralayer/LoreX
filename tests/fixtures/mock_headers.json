@@ -1,0 +1,26 @@
+[
+  {
+    "message_id": "<hail-mary-001@example.test>",
+    "subject": "Andy Weir - Project Hail Mary - Ray Porter.m4b [1/3]",
+    "bytes": 400000000,
+    "group": "alt.binaries.audiobooks"
+  },
+  {
+    "message_id": "<hail-mary-002@example.test>",
+    "subject": "Andy Weir - Project Hail Mary - Ray Porter.m4b [2/3]",
+    "bytes": 400000000,
+    "group": "alt.binaries.audiobooks"
+  },
+  {
+    "message_id": "<hail-mary-003@example.test>",
+    "subject": "Andy Weir - Project Hail Mary - Ray Porter.m4b [3/3]",
+    "bytes": 400000000,
+    "group": "alt.binaries.audiobooks"
+  },
+  {
+    "message_id": "<movie-001@example.test>",
+    "subject": "Example.Movie.2160p.x265.mkv [1/1]",
+    "bytes": 8000000000,
+    "group": "alt.binaries.movies"
+  }
+]
