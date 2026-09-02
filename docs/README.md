@@ -1,0 +1,1 @@
+LoreX project documentation lives here. Product design and implementation plans are under `docs/superpowers/`.
