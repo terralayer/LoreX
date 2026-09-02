@@ -7,6 +7,7 @@ import platform
 from pathlib import Path
 from typing import Any
 
+from benchmarks.frontend_size import collect_frontend_size
 from benchmarks.scenarios import SCENARIOS
 
 PRODUCT_VERSION = "0.1.1 alpha"
@@ -68,6 +69,11 @@ def run_suite(profile: str) -> dict[str, Any]:
     }
 
 
+def attach_frontend_size(report: dict[str, Any], dist: str | Path) -> dict[str, Any]:
+    report["frontend"] = collect_frontend_size(dist)
+    return report
+
+
 def _markdown(report: dict[str, Any]) -> str:
     environment = report["environment"]
     lines = [
@@ -100,6 +106,19 @@ def _markdown(report: dict[str, Any]) -> str:
         if scenario.get("note"):
             lines.append(f"\n> **{scenario['name']} note:** {scenario['note']}")
 
+    frontend = report.get("frontend")
+    if frontend is not None:
+        lines.extend(
+            [
+                "",
+                "## Frontend Production Build",
+                "",
+                f"- Files: `{frontend['file_count']}`",
+                f"- Raw bytes: `{frontend['raw_bytes']}`",
+                f"- Gzip bytes: `{frontend['gzip_bytes']}`",
+            ]
+        )
+
     lines.extend(["", "## Notes", ""])
     lines.extend(f"- {note}" for note in report["notes"])
     lines.append("")
@@ -120,9 +139,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the LoreX performance baseline suite")
     parser.add_argument("--profile", choices=sorted(_PROFILE_CONFIGS), default="smoke")
     parser.add_argument("--output", default="benchmark-results")
+    parser.add_argument("--frontend-dist")
     args = parser.parse_args()
 
     report = run_suite(args.profile)
+    if args.frontend_dist:
+        attach_frontend_size(report, args.frontend_dist)
     json_path, markdown_path = write_report(report, args.output)
     print(markdown_path.read_text(encoding="utf-8"))
     print(f"JSON report: {json_path}")
