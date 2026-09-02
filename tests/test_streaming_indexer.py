@@ -1,5 +1,6 @@
-import lorex.domain as domain
-from lorex.domain import ArticleHeader
+import pytest
+
+from lorex.domain import ArticleHeader, IndexCheckpoint, IndexedRelease
 from lorex.indexer.grouping import StreamingHeaderGrouper, normalize_header
 from lorex.repository import ReleaseRepository
 
@@ -9,6 +10,20 @@ def _header(part: int, total: int, *, book: str = "Project Hail Mary", message: 
         message_id=message or f"<{book.replace(' ', '-').lower()}-{part}@example.test>",
         subject=f"Andy Weir - {book} - Ray Porter.m4b [{part}/{total}]",
         bytes=10_000_000 + part,
+    )
+
+
+def _release(release_id: str, *, title: str = "Project Hail Mary") -> IndexedRelease:
+    return IndexedRelease(
+        id=release_id,
+        title=title,
+        author="Andy Weir",
+        narrator="Ray Porter",
+        format="m4b",
+        size=30_000_006,
+        completion=1.0,
+        nzb="",
+        source_subject=f"Andy Weir - {title} - Ray Porter.m4b",
     )
 
 
@@ -64,12 +79,51 @@ def test_streaming_grouper_bounds_pending_groups_and_routes_eviction_to_inspecti
     assert len(inspected[0].headers) == 1
 
 
-def test_index_batch_persistence_api_exists():
+def test_commit_index_batch_persists_release_articles_and_checkpoint():
     repository = ReleaseRepository()
+    release = _release("release-one")
+    articles = tuple(_header(part, 3) for part in range(1, 4))
+    checkpoint = IndexCheckpoint("backfill", articles[0].group, 100)
 
-    assert hasattr(domain, "IndexCheckpoint")
-    assert hasattr(repository, "commit_index_batch")
-    assert hasattr(repository, "get_checkpoint")
-    assert hasattr(repository, "get_articles")
-    assert hasattr(repository, "get_cached_nzb")
-    assert hasattr(repository, "cache_nzb")
+    inserted = repository.commit_index_batch([(release, articles)], checkpoint)
+
+    assert inserted == 1
+    assert repository.get(release.id) == release
+    assert repository.get_articles(release.id) == articles
+    assert repository.get_checkpoint("backfill", articles[0].group) == checkpoint
+
+
+def test_commit_index_batch_rejects_regressing_checkpoint_without_partial_mutation():
+    repository = ReleaseRepository()
+    group = "alt.binaries.audiobooks"
+    first = _release("release-one")
+    second = _release("release-two", title="The Martian")
+    first_articles = (_header(1, 1),)
+    second_articles = (_header(1, 1, book="The Martian"),)
+
+    assert repository.commit_index_batch(
+        [(first, first_articles)],
+        IndexCheckpoint("backfill", group, 100),
+    ) == 1
+
+    with pytest.raises(ValueError, match="checkpoint"):
+        repository.commit_index_batch(
+            [(second, second_articles)],
+            IndexCheckpoint("backfill", group, 99),
+        )
+
+    assert repository.get(second.id) is None
+    assert repository.get_articles(second.id) == ()
+    assert repository.get_checkpoint("backfill", group) == IndexCheckpoint("backfill", group, 100)
+
+
+def test_commit_index_batch_deduplicates_live_backfill_overlap():
+    repository = ReleaseRepository()
+    release = _release("release-one")
+    articles = tuple(_header(part, 3) for part in range(1, 4))
+
+    assert repository.commit_index_batch([(release, articles)]) == 1
+    assert repository.commit_index_batch([(release, articles)]) == 0
+
+    assert len(repository._items) == 1
+    assert repository.get_articles(release.id) == articles
