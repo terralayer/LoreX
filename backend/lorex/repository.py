@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 
 from lorex.domain import ArticleHeader, DownloadJob, IndexCheckpoint, IndexedRelease, LibraryBook
 
@@ -25,7 +25,28 @@ class ReleaseRepository:
         records: Iterable[tuple[IndexedRelease, tuple[ArticleHeader, ...]]],
         checkpoint: IndexCheckpoint | None = None,
     ) -> int:
-        return 0
+        batch = list(records)
+
+        if checkpoint is not None:
+            if checkpoint.article_number < 0:
+                raise ValueError("checkpoint article number cannot be negative")
+            key = (checkpoint.source, checkpoint.group)
+            previous = self._checkpoints.get(key)
+            if previous is not None and checkpoint.article_number < previous.article_number:
+                raise ValueError("checkpoint cannot move backwards")
+
+        inserted = 0
+        for release, articles in batch:
+            if release.id in self._items:
+                continue
+            self._items[release.id] = release
+            self._articles[release.id] = tuple(articles)
+            inserted += 1
+
+        if checkpoint is not None:
+            self._checkpoints[(checkpoint.source, checkpoint.group)] = checkpoint
+
+        return inserted
 
     def get_checkpoint(self, source: str, group: str) -> IndexCheckpoint | None:
         return self._checkpoints.get((source, group))
