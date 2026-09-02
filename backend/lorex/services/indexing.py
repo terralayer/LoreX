@@ -99,25 +99,27 @@ def index_batches(
         duplicate_releases += accepted - inserted
         records.clear()
 
-    def process_candidates(candidates: Iterable[ReleaseCandidate]) -> None:
+    def process_candidate(candidate: ReleaseCandidate) -> None:
         nonlocal candidates_completed, releases_rejected
-        for candidate in candidates:
-            candidates_completed += 1
-            record = _release_record(candidate, inspect_candidate)
-            if record is None:
-                releases_rejected += 1
-                continue
-            records.append(record)
-            if len(records) >= batch_size:
-                commit_records()
+        candidates_completed += 1
+        record = _release_record(candidate, inspect_candidate)
+        if record is None:
+            releases_rejected += 1
+            return
+        records.append(record)
+        if len(records) >= batch_size:
+            commit_records()
 
     for batch in batches:
         for header in batch.headers:
             headers_received += 1
-            process_candidates(grouper.feed(header))
+            candidate = grouper.feed_one(header)
+            if candidate is not None:
+                process_candidate(candidate)
         commit_records(batch.checkpoint)
 
-    process_candidates(grouper.flush())
+    for candidate in grouper.flush():
+        process_candidate(candidate)
     if records:
         commit_records()
 
