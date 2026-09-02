@@ -1,5 +1,7 @@
+import lorex.domain as domain
 from lorex.domain import ArticleHeader
 from lorex.indexer.grouping import StreamingHeaderGrouper, normalize_header
+from lorex.repository import ReleaseRepository
 
 
 def _header(part: int, total: int, *, book: str = "Project Hail Mary", message: str | None = None) -> ArticleHeader:
@@ -60,3 +62,14 @@ def test_streaming_grouper_bounds_pending_groups_and_routes_eviction_to_inspecti
     assert len(inspected) == 1
     assert inspected[0].subject_stem == "Andy Weir - Book One - Ray Porter.m4b"
     assert len(inspected[0].headers) == 1
+
+
+def test_index_batch_persistence_api_exists():
+    repository = ReleaseRepository()
+
+    assert hasattr(domain, "IndexCheckpoint")
+    assert hasattr(repository, "commit_index_batch")
+    assert hasattr(repository, "get_checkpoint")
+    assert hasattr(repository, "get_articles")
+    assert hasattr(repository, "get_cached_nzb")
+    assert hasattr(repository, "cache_nzb")
