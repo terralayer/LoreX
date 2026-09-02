@@ -1,15 +1,32 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
-from lorex.domain import ArticleHeader, IndexedRelease
+from lorex.domain import ArticleHeader, IndexCheckpoint, IndexedRelease
 from lorex.indexer.classifier import classify_audiobook
 from lorex.indexer.grouping import group_headers
 from lorex.indexer.nzb import build_nzb
 from lorex.repository import ReleaseRepository
 
 _EXTENSION = re.compile(r"\.(m4b|m4a|mp3|flac|aac)$", re.IGNORECASE)
+
+
+@dataclass(frozen=True, slots=True)
+class IndexBatch:
+    headers: Iterable[ArticleHeader]
+    checkpoint: IndexCheckpoint | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class IndexingStats:
+    headers_received: int = 0
+    candidates_completed: int = 0
+    releases_indexed: int = 0
+    releases_rejected: int = 0
+    duplicate_releases: int = 0
 
 
 def _parse_identity(subject: str) -> tuple[str, str, str | None, str]:
@@ -21,6 +38,16 @@ def _parse_identity(subject: str) -> tuple[str, str, str | None, str]:
     if len(parts) == 2:
         return parts[0], parts[1], None, fmt
     return "Unknown Author", clean, None, fmt
+
+
+def index_batches(
+    batches: Iterable[IndexBatch],
+    repository: ReleaseRepository,
+    *,
+    max_pending_groups: int = 4096,
+    inspect_candidate=None,
+) -> IndexingStats:
+    raise NotImplementedError
 
 
 def index_headers(headers: list[ArticleHeader], repository: ReleaseRepository) -> list[IndexedRelease]:
