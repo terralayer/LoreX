@@ -12,6 +12,14 @@ def normalize_subject(subject: str) -> str:
     return _PART_SUFFIX.sub("", subject).strip()
 
 
+def normalize_header(header: ArticleHeader):
+    raise NotImplementedError
+
+
+class StreamingHeaderGrouper:
+    pass
+
+
 def group_headers(headers: list[ArticleHeader]) -> list[ReleaseCandidate]:
     grouped: dict[str, list[ArticleHeader]] = defaultdict(list)
     for header in headers:
