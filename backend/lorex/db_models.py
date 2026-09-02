@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Identity, Index, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -79,11 +79,12 @@ class LibraryBookRow(Base):
     __tablename__ = "library_books"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    release_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     title: Mapped[str] = mapped_column(Text)
     author: Mapped[str] = mapped_column(Text)
     narrator: Mapped[str | None] = mapped_column(Text, nullable=True)
+    format: Mapped[str] = mapped_column(String(16), nullable=False)
     path: Mapped[str] = mapped_column(Text, nullable=False)
+    size: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
 class DownloadJobRow(Base):
@@ -93,7 +94,7 @@ class DownloadJobRow(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     release_id: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
-    created_order: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_order: Mapped[int] = mapped_column(BigInteger, Identity(), nullable=False, unique=True)
 
 
 class ImportJobRow(Base):
