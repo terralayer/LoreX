@@ -45,6 +45,25 @@ def test_smoke_suite_has_stable_schema_and_scenarios(tmp_path) -> None:
     assert "library_importer" in markdown
 
 
+def test_frontend_build_size_is_embedded_in_json_and_markdown(tmp_path) -> None:
+    runner = _runner_module()
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "app.js").write_bytes(b"console.log('LoreX')")
+
+    report = runner.run_suite("smoke")
+    runner.attach_frontend_size(report, dist)
+    json_path, markdown_path = runner.write_report(report, tmp_path / "report")
+
+    persisted = json.loads(json_path.read_text(encoding="utf-8"))
+    assert persisted["frontend"]["file_count"] == 1
+    assert persisted["frontend"]["raw_bytes"] > 0
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert "## Frontend Production Build" in markdown
+    assert "Raw bytes" in markdown
+    assert "Gzip bytes" in markdown
+
+
 def test_unknown_profile_is_rejected() -> None:
     runner = _runner_module()
 
