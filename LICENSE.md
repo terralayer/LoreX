@@ -1,1 +1,0 @@
-LoreX is currently under active initial development. A project license will be selected before the first public release. Until then, no additional license grant is made by this repository beyond rights provided by applicable law.
