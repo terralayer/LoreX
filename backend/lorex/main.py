@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    application = FastAPI(title="LoreX", version="0.1.0", lifespan=lifespan)
+    application = FastAPI(title="LoreX", version="0.1.1 alpha", lifespan=lifespan)
 
     @application.get("/api/health")
     def health() -> dict[str, str]:
