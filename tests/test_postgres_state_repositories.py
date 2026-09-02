@@ -7,7 +7,8 @@ from sqlalchemy import text
 
 from lorex.db import create_engine_from_url, session_factory
 from lorex.domain import DownloadJob, LibraryBook
-from lorex.postgres_repository import PostgresJobRepository, PostgresLibraryRepository
+from lorex.main import AppContainer
+from lorex.postgres_repository import PostgresJobRepository, PostgresLibraryRepository, PostgresReleaseRepository
 
 
 @pytest.fixture()
@@ -46,3 +47,11 @@ def test_download_jobs_survive_recreation_and_pop_fifo(sessions):
     assert second.pop_next() == DownloadJob(id="job-1", release_id="release-1")
     assert second.pop_next() == DownloadJob(id="job-2", release_id="release-2")
     assert second.pop_next() is None
+
+
+def test_app_container_uses_postgres_when_database_url_is_configured():
+    container = AppContainer.build(os.environ["LOREX_DATABASE_URL"])
+
+    assert isinstance(container.releases, PostgresReleaseRepository)
+    assert isinstance(container.jobs, PostgresJobRepository)
+    assert isinstance(container.library, PostgresLibraryRepository)
