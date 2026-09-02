@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
-from lorex.db_models import IndexerCheckpointRow, ReleaseArticleRow, ReleaseRow
-from lorex.domain import ArticleHeader, IndexCheckpoint, IndexedRelease
+from lorex.db_models import (
+    DownloadJobRow,
+    IndexerCheckpointRow,
+    LibraryBookRow,
+    ReleaseArticleRow,
+    ReleaseRow,
+)
+from lorex.domain import ArticleHeader, DownloadJob, IndexCheckpoint, IndexedRelease, LibraryBook
 
 
 def _normalize(value: str) -> str:
@@ -192,3 +198,79 @@ class PostgresReleaseRepository:
                 )
             rows = session.execute(statement.order_by(ReleaseRow.id)).scalars()
             return [_to_release(row) for row in rows]
+
+
+class PostgresLibraryRepository:
+    def __init__(self, sessions: sessionmaker[Session]) -> None:
+        self._sessions = sessions
+
+    def add(self, book: LibraryBook) -> LibraryBook:
+        values = {
+            "id": book.id,
+            "title": book.title,
+            "author": book.author,
+            "narrator": book.narrator,
+            "format": book.format,
+            "path": book.path,
+            "size": book.size,
+        }
+        with self._sessions.begin() as session:
+            statement = pg_insert(LibraryBookRow).values(values)
+            statement = statement.on_conflict_do_update(
+                index_elements=[LibraryBookRow.id],
+                set_={key: value for key, value in values.items() if key != "id"},
+            )
+            session.execute(statement)
+        return book
+
+    def all(self) -> list[LibraryBook]:
+        with self._sessions() as session:
+            rows = session.execute(
+                select(LibraryBookRow).order_by(LibraryBookRow.author, LibraryBookRow.title)
+            ).scalars()
+            return [
+                LibraryBook(
+                    id=row.id,
+                    title=row.title,
+                    author=row.author,
+                    narrator=row.narrator,
+                    format=row.format,
+                    path=row.path,
+                    size=row.size,
+                )
+                for row in rows
+            ]
+
+
+class PostgresJobRepository:
+    def __init__(self, sessions: sessionmaker[Session]) -> None:
+        self._sessions = sessions
+
+    def add(self, job: DownloadJob) -> DownloadJob:
+        with self._sessions.begin() as session:
+            statement = pg_insert(DownloadJobRow).values(
+                id=job.id,
+                release_id=job.release_id,
+                status=job.status,
+            )
+            statement = statement.on_conflict_do_update(
+                index_elements=[DownloadJobRow.id],
+                set_={"release_id": job.release_id, "status": job.status},
+            )
+            session.execute(statement)
+        return job
+
+    def pop_next(self) -> DownloadJob | None:
+        with self._sessions.begin() as session:
+            row = session.execute(
+                select(DownloadJobRow)
+                .where(DownloadJobRow.status == "queued")
+                .order_by(DownloadJobRow.created_order)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            job = DownloadJob(id=row.id, release_id=row.release_id, status=row.status)
+            session.execute(delete(DownloadJobRow).where(DownloadJobRow.id == row.id))
+            return job
