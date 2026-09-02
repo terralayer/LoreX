@@ -70,11 +70,12 @@ def upgrade() -> None:
     op.create_table(
         "library_books",
         sa.Column("id", sa.String(length=64), primary_key=True),
-        sa.Column("release_id", sa.String(length=64), nullable=False, unique=True),
         sa.Column("title", sa.Text(), nullable=False),
         sa.Column("author", sa.Text(), nullable=False),
         sa.Column("narrator", sa.Text(), nullable=True),
+        sa.Column("format", sa.String(length=16), nullable=False),
         sa.Column("path", sa.Text(), nullable=False),
+        sa.Column("size", sa.BigInteger(), nullable=False),
     )
 
     op.create_table(
@@ -82,7 +83,7 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=64), primary_key=True),
         sa.Column("release_id", sa.String(length=64), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="queued"),
-        sa.Column("created_order", sa.BigInteger(), nullable=False),
+        sa.Column("created_order", sa.BigInteger(), sa.Identity(), nullable=False, unique=True),
     )
     op.create_index("ix_download_jobs_status", "download_jobs", ["status", "created_order"])
 
