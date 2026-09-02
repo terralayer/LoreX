@@ -19,7 +19,11 @@ from lorex.indexer.grouping import group_headers
 from lorex.library.importer import LibraryImporter
 from lorex.main import create_app
 from lorex.repository import LibraryRepository, ReleaseRepository
-from lorex.services.indexing import index_headers
+from lorex.services.indexing import IndexBatch, index_batches
+
+_INDEX_HEADER_BATCH_SIZE = 2048
+_INDEX_WRITE_BATCH_SIZE = 512
+_INDEX_MAX_PENDING_GROUPS = 4096
 
 
 def _throughput(operation_count: int, timing: BenchmarkResult) -> float:
@@ -54,10 +58,30 @@ def benchmark_index_headers(scale: int, samples: int) -> dict[str, Any]:
 
     def operation() -> int:
         repository = ReleaseRepository()
-        return len(index_headers(headers, repository))
+        batches = (
+            IndexBatch(headers=headers[start : start + _INDEX_HEADER_BATCH_SIZE])
+            for start in range(0, len(headers), _INDEX_HEADER_BATCH_SIZE)
+        )
+        stats = index_batches(
+            batches,
+            repository,
+            batch_size=_INDEX_WRITE_BATCH_SIZE,
+            max_pending_groups=_INDEX_MAX_PENDING_GROUPS,
+        )
+        return stats.releases_indexed
 
     timing = measure_samples("index_headers", operation, samples=samples, warmups=0)
-    return _result("index_headers", scale, "headers", scale, timing)
+    return _result(
+        "index_headers",
+        scale,
+        "headers",
+        scale,
+        timing,
+        note=(
+            f"Streaming index_batches: header batch {_INDEX_HEADER_BATCH_SIZE}, "
+            f"write batch {_INDEX_WRITE_BATCH_SIZE}, max pending groups {_INDEX_MAX_PENDING_GROUPS}."
+        ),
+    )
 
 
 def benchmark_group_and_classify(scale: int, samples: int) -> dict[str, Any]:

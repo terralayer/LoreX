@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import asdict
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from lorex.domain import ArticleHeader, DownloadJob
+from lorex.indexer.nzb import get_or_build_nzb
 from lorex.services.indexing import index_headers
 
 router = APIRouter(prefix="/api", tags=["releases"])
@@ -36,6 +37,16 @@ def search_releases(request: Request, q: str = "") -> dict:
     container = request.app.state.container
     results = container.releases.search(q)
     return {"count": len(results), "results": [asdict(item) for item in results]}
+
+
+@router.get("/releases/{release_id}/nzb")
+def release_nzb(release_id: str, request: Request) -> Response:
+    container = request.app.state.container
+    try:
+        payload = get_or_build_nzb(release_id, container.releases)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Release NZB not found") from exc
+    return Response(content=payload, media_type="application/x-nzb")
 
 
 @router.post("/releases/{release_id}/grab")

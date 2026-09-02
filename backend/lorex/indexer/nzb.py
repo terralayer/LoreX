@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 from lorex.domain import ReleaseCandidate
+
+if TYPE_CHECKING:
+    from lorex.repository import ReleaseRepository
 
 _NZB_NS = "http://www.newzbin.com/DTD/2003/nzb"
 
@@ -21,3 +25,20 @@ def build_nzb(candidate: ReleaseCandidate) -> str:
         segment.text = header.message_id.strip("<>")
 
     return tostring(root, encoding="unicode", xml_declaration=True)
+
+
+def get_or_build_nzb(release_id: str, repository: ReleaseRepository) -> str:
+    cached = repository.get_cached_nzb(release_id)
+    if cached is not None:
+        return cached
+
+    release = repository.get(release_id)
+    if release is None:
+        raise KeyError(release_id)
+
+    articles = repository.get_articles(release_id)
+    if not articles:
+        raise KeyError(f"no article references for release {release_id}")
+
+    candidate = ReleaseCandidate(subject_stem=release.source_subject, headers=list(articles))
+    return repository.cache_nzb(release_id, build_nzb(candidate))
