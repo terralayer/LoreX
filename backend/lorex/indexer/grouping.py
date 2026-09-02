@@ -64,20 +64,25 @@ class _PendingGroup:
     unnumbered_headers: list[ArticleHeader] = field(default_factory=list)
     seen_message_ids: set[str] = field(default_factory=set)
 
-    def add(self, normalized: NormalizedHeader) -> None:
-        message_id = normalized.header.message_id
+    def add(
+        self,
+        header: ArticleHeader,
+        part_number: int | None,
+        total_parts: int | None,
+    ) -> None:
+        message_id = header.message_id
         if message_id in self.seen_message_ids:
             return
         self.seen_message_ids.add(message_id)
 
-        if normalized.part_number is None or normalized.total_parts is None:
-            self.unnumbered_headers.append(normalized.header)
+        if part_number is None or total_parts is None:
+            self.unnumbered_headers.append(header)
             return
 
         if self.total_parts is None:
-            self.total_parts = normalized.total_parts
-        if normalized.part_number not in self.numbered_parts:
-            self.numbered_parts[normalized.part_number] = normalized.header
+            self.total_parts = total_parts
+        if part_number not in self.numbered_parts:
+            self.numbered_parts[part_number] = header
 
     @property
     def is_complete(self) -> bool:
@@ -118,25 +123,26 @@ class StreamingHeaderGrouper:
         _, evicted = self._pending.popitem(last=False)
         self._inspect(evicted)
 
-    def feed(self, header: ArticleHeader) -> list[ReleaseCandidate]:
-        normalized = normalize_header(header)
-        group = self._pending.get(normalized.subject_stem)
+    def feed_one(self, header: ArticleHeader) -> ReleaseCandidate | None:
+        subject_stem, part_number, total_parts = _split_part_suffix(header.subject)
+        group = self._pending.get(subject_stem)
         if group is None:
             self._make_room()
-            group = _PendingGroup(
-                subject_stem=normalized.subject_stem,
-                total_parts=normalized.total_parts,
-            )
-            self._pending[normalized.subject_stem] = group
+            group = _PendingGroup(subject_stem=subject_stem, total_parts=total_parts)
+            self._pending[subject_stem] = group
         else:
-            self._pending.move_to_end(normalized.subject_stem)
+            self._pending.move_to_end(subject_stem)
 
-        group.add(normalized)
+        group.add(header, part_number, total_parts)
         if not group.is_complete:
-            return []
+            return None
 
-        self._pending.pop(normalized.subject_stem, None)
-        return [group.to_candidate()]
+        self._pending.pop(subject_stem, None)
+        return group.to_candidate()
+
+    def feed(self, header: ArticleHeader) -> list[ReleaseCandidate]:
+        candidate = self.feed_one(header)
+        return [] if candidate is None else [candidate]
 
     def flush(self) -> list[ReleaseCandidate]:
         completed: list[ReleaseCandidate] = []
@@ -159,6 +165,8 @@ def group_headers(headers: list[ArticleHeader]) -> list[ReleaseCandidate]:
     grouper = StreamingHeaderGrouper(max_pending_groups=max(1, len(headers)))
     candidates: list[ReleaseCandidate] = []
     for header in headers:
-        candidates.extend(grouper.feed(header))
+        candidate = grouper.feed_one(header)
+        if candidate is not None:
+            candidates.append(candidate)
     candidates.extend(grouper.flush())
     return sorted(candidates, key=lambda item: item.subject_stem.casefold())
