@@ -39,4 +39,4 @@ The same run's 100,000-row PostgreSQL sample measured 296.164 ms p50 and 304.220
 - GitHub Actions run `33712137501` on commit `789911c` passed migrations, the complete backend test suite, frontend production build, and the 1M performance gate.
 - Its independently triggered companion run `33712140300` also passed on the same commit.
 - The branch diff is limited to the PR 4 design/plan, trigram migration, search projections/repository, release and dashboard APIs, benchmark coverage, and tests. Queue, downloader, importer, metadata, and frontend optimization behavior remain out of scope.
-- A final exact-head workflow is required after this performance record is committed.
+- Final exact-head GitHub Actions run `33712682910` on commit `47e5b20ced912d03eba88b3ad176192aee2d1be2` passed migrations, backend tests, frontend production build, the benchmark gate, benchmark summary publication, and benchmark artifact upload.
