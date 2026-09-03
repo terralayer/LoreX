@@ -6,13 +6,21 @@ def test_index_search_nzb_and_grab(client, mock_headers):
     searched = client.get("/api/releases/search", params={"q": "Project Hail Mary"})
     assert searched.status_code == 200
     payload = searched.json()
-    assert payload["count"] == 1
+    assert payload["total"] == 1
+    assert payload["limit"] == 50
+    assert payload["offset"] == 0
     release = payload["results"][0]
     assert release["author"] == "Andy Weir"
     assert release["title"] == "Project Hail Mary"
     assert release["narrator"] == "Ray Porter"
     assert release["format"] == "m4b"
-    assert release["nzb"] == ""
+    assert "nzb" not in release
+    assert "source_subject" not in release
+
+    detail = client.get(f"/api/releases/{release['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["nzb"] == ""
+    assert detail.json()["source_subject"].startswith("Andy Weir - Project Hail Mary")
 
     nzb = client.get(f"/api/releases/{release['id']}/nzb")
     assert nzb.status_code == 200
@@ -26,3 +34,35 @@ def test_index_search_nzb_and_grab(client, mock_headers):
     assert grabbed.status_code == 200
     assert grabbed.json()["status"] == "queued"
     assert grabbed.json()["release_id"] == release["id"]
+
+
+def test_release_search_is_bounded_and_paginated(client, mock_headers):
+    client.post("/api/index/mock", json={"headers": mock_headers})
+
+    response = client.get(
+        "/api/releases/search",
+        params={"limit": 1, "offset": 0, "sort": "author", "order": "desc", "format": "m4b"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["limit"] == 1
+    assert len(response.json()["results"]) <= 1
+
+
+def test_release_search_rejects_invalid_parameters(client):
+    for params in (
+        {"limit": 0},
+        {"limit": 101},
+        {"offset": -1},
+        {"sort": "nzb"},
+        {"order": "sideways"},
+    ):
+        response = client.get("/api/releases/search", params=params)
+        assert response.status_code == 422, params
+
+
+def test_release_detail_returns_404(client):
+    response = client.get("/api/releases/missing")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Release not found"}

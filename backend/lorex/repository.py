@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from lorex.domain import ArticleHeader, DownloadJob, IndexCheckpoint, IndexedRelease, LibraryBook
+from lorex.search import ReleaseSearchPage, ReleaseSearchQuery, ReleaseSummary
 
 
 @dataclass(slots=True)
@@ -74,6 +75,42 @@ class ReleaseRepository:
             or (item.narrator and needle in item.narrator.casefold())
             or needle in item.source_subject.casefold()
         ]
+
+    def search_page(self, query: ReleaseSearchQuery) -> ReleaseSearchPage:
+        values = self.search(query.q)
+        if query.format is not None:
+            values = [item for item in values if item.format == query.format]
+        if query.download_status is not None or query.import_status is not None:
+            values = []
+
+        sort_keys = {
+            "title": lambda item: item.title.casefold(),
+            "author": lambda item: item.author.casefold(),
+            "narrator": lambda item: (item.narrator or "").casefold(),
+            "format": lambda item: item.format,
+            "size": lambda item: item.size,
+            "completion": lambda item: item.completion,
+            "posted_at": lambda item: "",
+        }
+        values.sort(key=lambda item: (sort_keys[query.sort](item), item.id), reverse=query.order == "desc")
+        total = len(values)
+        values = values[query.offset : query.offset + query.limit]
+        summaries = tuple(
+            ReleaseSummary(
+                id=item.id,
+                title=item.title,
+                author=item.author,
+                narrator=item.narrator,
+                format=item.format,
+                size=item.size,
+                completion=item.completion,
+                download_status=None,
+                import_status=None,
+                posted_at=None,
+            )
+            for item in values
+        )
+        return ReleaseSearchPage(total, query.limit, query.offset, summaries)
 
 
 @dataclass(slots=True)

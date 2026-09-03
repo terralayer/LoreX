@@ -6,6 +6,9 @@ from typing import Literal
 
 ReleaseSort = Literal["title", "author", "narrator", "format", "size", "completion", "posted_at"]
 SortOrder = Literal["asc", "desc"]
+ReleaseFormat = Literal["m4b", "m4a", "mp3", "flac", "aac"]
+DownloadStatus = Literal["queued", "downloading", "completed", "failed"]
+ImportStatus = Literal["pending", "importing", "imported", "failed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,9 +18,9 @@ class ReleaseSearchQuery:
     offset: int = 0
     sort: ReleaseSort = "title"
     order: SortOrder = "asc"
-    format: str | None = None
-    download_status: str | None = None
-    import_status: str | None = None
+    format: ReleaseFormat | None = None
+    download_status: DownloadStatus | None = None
+    import_status: ImportStatus | None = None
 
     def __post_init__(self) -> None:
         if not 1 <= self.limit <= 100:
