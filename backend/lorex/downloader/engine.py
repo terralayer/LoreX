@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from hashlib import sha1
 from pathlib import Path
+from threading import BoundedSemaphore, Lock
 from time import monotonic
 from typing import Any
 
@@ -48,6 +50,7 @@ class StreamingDownloader:
         self.providers = providers
         self.state = state
         self.config = config
+        self._article_slots = BoundedSemaphore(config.max_active_articles)
 
     def download_job(
         self,
@@ -57,29 +60,43 @@ class StreamingDownloader:
     ) -> DownloadResult:
         job_dir = self.config.download_root / job.id
         job_dir.mkdir(parents=True, exist_ok=True)
-        pending = iter(self.state.pending_articles(job.id, articles))
+        materialized_articles = tuple(articles)
+        pending = iter(self.state.pending_articles(job.id, materialized_articles))
+        total_bytes = sum(article.bytes for article in materialized_articles)
         coalescer = ProgressCoalescer(
             self.config.progress_byte_threshold,
             self.config.progress_time_threshold_seconds,
         )
         sink = _JobProgressSink(self.state, job.id)
-        downloaded_bytes = 0
+        progress_lock = Lock()
+
+        def record_progress(byte_count: int) -> None:
+            with progress_lock:
+                coalescer.record(byte_count)
+                coalescer.flush_if_needed(sink)
+
+        def flush_progress() -> None:
+            with progress_lock:
+                coalescer.flush(sink)
 
         try:
             with ThreadPoolExecutor(max_workers=self.config.max_active_articles) as executor:
-                active: dict[Future[tuple[int, str]], int] = {}
-                next_index = 0
+                active: set[Future[tuple[int, str]]] = set()
 
                 def submit_next() -> bool:
-                    nonlocal next_index
                     try:
                         article = next(pending)
                     except StopIteration:
                         return False
-                    index = next_index
-                    next_index += 1
-                    future = executor.submit(self._download_article, job, article, job_dir, index)
-                    active[future] = index
+                    active.add(
+                        executor.submit(
+                            self._download_article,
+                            job,
+                            article,
+                            job_dir,
+                            record_progress,
+                        )
+                    )
                     return True
 
                 for _ in range(self.config.max_active_articles):
@@ -89,17 +106,14 @@ class StreamingDownloader:
                 while active:
                     done, _ = wait(tuple(active), return_when=FIRST_COMPLETED)
                     for future in done:
-                        active.pop(future, None)
-                        byte_count, _provider = future.result()
-                        downloaded_bytes += byte_count
-                        coalescer.record(byte_count)
-                        coalescer.flush_if_needed(sink)
+                        active.remove(future)
+                        future.result()
                         submit_next()
 
-            coalescer.flush(sink)
+            flush_progress()
             self.state.mark_completed(job.id)
         except Exception:
-            coalescer.flush(sink)
+            flush_progress()
             self.state.mark_failed(job.id)
             raise
 
@@ -110,7 +124,7 @@ class StreamingDownloader:
             narrator=release.narrator,
             format=release.format,
             file_name=f"{release.title}.{release.format}",
-            size=downloaded_bytes,
+            size=total_bytes,
         )
 
     def _download_article(
@@ -118,60 +132,64 @@ class StreamingDownloader:
         job: DownloadJob,
         article: ArticleHeader,
         job_dir: Path,
-        index: int,
+        record_progress: Callable[[int], None],
     ) -> tuple[int, str]:
-        partial = job_dir / f"article-{index:06d}.partial"
-        complete = job_dir / f"article-{index:06d}.part.complete"
+        article_key = sha1(article.message_id.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+        partial = job_dir / f"article-{article_key}.partial"
+        complete = job_dir / f"article-{article_key}.part.complete"
         last_error: Exception | None = None
 
-        for attempt_index, config in enumerate(self.providers.ordered()):
-            try:
-                pool = self.providers.pool_for(config.name)
-            except RuntimeError:
-                continue
+        with self._article_slots:
+            for attempt_index, config in enumerate(self.providers.ordered()):
+                try:
+                    pool = self.providers.pool_for(config.name)
+                except RuntimeError:
+                    continue
 
-            fallback = attempt_index > 0
-            self.state.mark_article_started(job.id, article.message_id, config.name)
-            started = monotonic()
-            byte_count = 0
-            try:
-                with partial.open("wb") as handle:
-                    for chunk in pool.stream_article(article.message_id):
-                        if not isinstance(chunk, (bytes, bytearray, memoryview)):
-                            raise TypeError("provider chunks must be bytes-like")
-                        handle.write(chunk)
-                        byte_count += len(chunk)
-                partial.replace(complete)
-                self.state.mark_article_completed(
-                    job.id,
-                    article.message_id,
-                    config.name,
-                    byte_count,
-                )
-                self._record_health(
-                    config.name,
-                    success=True,
-                    fallback=fallback,
-                    byte_count=byte_count,
-                    elapsed_ms=(monotonic() - started) * 1000.0,
-                )
-                return byte_count, config.name
-            except (ArticleUnavailable, ProviderTemporaryError) as exc:
-                last_error = exc
-                partial.unlink(missing_ok=True)
-                self.state.mark_article_failed(job.id, article.message_id, config.name)
-                self._record_health(
-                    config.name,
-                    success=False,
-                    fallback=fallback,
-                    byte_count=0,
-                    elapsed_ms=(monotonic() - started) * 1000.0,
-                )
-                continue
-            except Exception:
-                partial.unlink(missing_ok=True)
-                self.state.mark_article_failed(job.id, article.message_id, config.name)
-                raise
+                fallback = attempt_index > 0
+                self.state.mark_article_started(job.id, article.message_id, config.name)
+                started = monotonic()
+                byte_count = 0
+                try:
+                    with partial.open("wb") as handle:
+                        for chunk in pool.stream_article(article.message_id):
+                            if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                                raise TypeError("provider chunks must be bytes-like")
+                            handle.write(chunk)
+                            chunk_size = len(chunk)
+                            byte_count += chunk_size
+                            record_progress(chunk_size)
+                    partial.replace(complete)
+                    self.state.mark_article_completed(
+                        job.id,
+                        article.message_id,
+                        config.name,
+                        byte_count,
+                    )
+                    self._record_health(
+                        config.name,
+                        success=True,
+                        fallback=fallback,
+                        byte_count=byte_count,
+                        elapsed_ms=(monotonic() - started) * 1000.0,
+                    )
+                    return byte_count, config.name
+                except (ArticleUnavailable, ProviderTemporaryError) as exc:
+                    last_error = exc
+                    partial.unlink(missing_ok=True)
+                    self.state.mark_article_failed(job.id, article.message_id, config.name)
+                    self._record_health(
+                        config.name,
+                        success=False,
+                        fallback=fallback,
+                        byte_count=0,
+                        elapsed_ms=(monotonic() - started) * 1000.0,
+                    )
+                    continue
+                except Exception:
+                    partial.unlink(missing_ok=True)
+                    self.state.mark_article_failed(job.id, article.message_id, config.name)
+                    raise
 
         if last_error is not None:
             raise last_error
