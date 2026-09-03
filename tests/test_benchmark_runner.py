@@ -116,13 +116,31 @@ def test_ci_gate_accepts_fast_million_release_search() -> None:
     runner.enforce_performance_gates(report)
 
 
-def test_pr5_gates_reject_queue_memory_and_progress_regressions() -> None:
+def test_pr5_queue_gate_compares_same_workload_head_removal() -> None:
     runner = _runner_module()
 
-    with pytest.raises(RuntimeError, match="queue_deque_roundtrip"):
+    runner.enforce_performance_gates(
+        {
+            "scenarios": [
+                {"name": "legacy_list_head_removal", "scale": 50_000, "timing": {"p95_ms": 100.0}},
+                {"name": "deque_head_removal", "scale": 50_000, "timing": {"p95_ms": 20.0}},
+            ]
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="deque_head_removal"):
         runner.enforce_performance_gates(
-            {"scenarios": [{"name": "queue_deque_roundtrip", "scale": 10_000, "timing": {"p95_ms": 107.0}}]}
+            {
+                "scenarios": [
+                    {"name": "legacy_list_head_removal", "scale": 50_000, "timing": {"p95_ms": 100.0}},
+                    {"name": "deque_head_removal", "scale": 50_000, "timing": {"p95_ms": 25.0}},
+                ]
+            }
         )
+
+
+def test_pr5_gates_reject_memory_and_progress_regressions() -> None:
+    runner = _runner_module()
 
     with pytest.raises(RuntimeError, match="peak Python allocation"):
         runner.enforce_performance_gates(
