@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from lorex.metadata.cache import InMemoryMetadataCache, MetadataCache
@@ -21,6 +22,12 @@ class LeaseCoordinator(Protocol):
 
 class ArtworkSchedulerLike(Protocol):
     def submit(self, cache_key: str, url: str) -> bool: ...
+
+
+@dataclass(slots=True)
+class _KeyLockState:
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    users: int = 0
 
 
 class MetadataResolver:
@@ -49,12 +56,25 @@ class MetadataResolver:
         self.sleeper = sleeper
         self.clock = clock
         self._fallback_cache = InMemoryMetadataCache()
-        self._key_locks: dict[str, threading.Lock] = {}
+        self._key_locks: dict[str, _KeyLockState] = {}
         self._key_locks_guard = threading.Lock()
 
-    def _lock_for(self, key: str) -> threading.Lock:
+    def _reserve_key_lock(self, key: str) -> _KeyLockState:
         with self._key_locks_guard:
-            return self._key_locks.setdefault(key, threading.Lock())
+            state = self._key_locks.get(key)
+            if state is None:
+                state = _KeyLockState()
+                self._key_locks[key] = state
+            state.users += 1
+        state.lock.acquire()
+        return state
+
+    def _release_key_lock(self, key: str, state: _KeyLockState) -> None:
+        state.lock.release()
+        with self._key_locks_guard:
+            state.users -= 1
+            if state.users == 0 and self._key_locks.get(key) is state:
+                self._key_locks.pop(key, None)
 
     def _get_entry(self, key: str):
         try:
@@ -165,8 +185,9 @@ class MetadataResolver:
                 try:
                     lease = self.lease_coordinator.acquire(key)
                 except Exception:
-                    lease = None
-                    break
+                    # Redis is an accelerator. The caller still holds the local
+                    # same-key lock, so this worker can safely become the leader.
+                    return self._leader_lookup(key, lookup, local_metadata, None)
                 if lease is not None:
                     cached, result = self._read_cached(key, count_miss=False)
                     if cached:
@@ -193,8 +214,8 @@ class MetadataResolver:
         if cached:
             return local_metadata if result is None and local_metadata is not None else result
 
-        lock = self._lock_for(key)
-        with lock:
+        state = self._reserve_key_lock(key)
+        try:
             cached, result = self._read_cached(key, count_miss=False)
             if cached:
                 self.metrics.increment("coalesced_followers")
@@ -213,3 +234,5 @@ class MetadataResolver:
             if lease is not None:
                 return self._leader_lookup(key, lookup, local_metadata, lease)
             return self._wait_for_leader(key, lookup, local_metadata)
+        finally:
+            self._release_key_lock(key, state)
