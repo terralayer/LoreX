@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, FastAPI, SQLAlchemy 2, PostgreSQL 16, Alembic, psycopg 3, pytest, existing LoreX benchmark harness.
 
-**Spec:** `docs/superpowers/specs/2026-09-01-whole-app-optimization-design.md`
+**Spec:** `docs/superpowers/specs/2026-09-02-optimization-pr4-fast-search-apis-design.md`
 
 ## Global Constraints
 
@@ -71,7 +71,24 @@
 - [ ] Add full detail endpoint before the existing `/releases/{release_id}/nzb` route semantics are affected; verify 404 behavior.
 - [ ] Run targeted API tests and full backend suite; commit GREEN implementation.
 
-### Task 4: One-million-row PostgreSQL search benchmark and hard gate
+### Task 4: Bounded dashboard aggregates
+
+**Files:**
+- Modify: `backend/lorex/postgres_repository.py`
+- Modify: `backend/lorex/api/library.py`
+- Test: `tests/test_postgres_search.py`
+- Test: `tests/test_release_api.py`
+
+**Interfaces:**
+- Produces `PostgresReleaseRepository.dashboard_summary() -> DashboardSummary`.
+- Produces a lightweight dashboard API response with aggregate counts only.
+
+- [ ] Write RED repository and API tests proving dashboard counts are computed without materializing release rows or issuing per-row lookups.
+- [ ] Add an immutable `DashboardSummary` projection and implement aggregate `COUNT` queries grouped by the status fields required by the dashboard.
+- [ ] Expose the aggregate response through the existing API router without returning release detail objects.
+- [ ] Run targeted API/repository tests and the full backend suite; commit GREEN implementation.
+
+### Task 5: One-million-row PostgreSQL search benchmark and hard gate
 
 **Files:**
 - Modify: `benchmarks/scenarios.py`
@@ -90,7 +107,7 @@
 - [ ] Run the full CI benchmark. If the gate fails, inspect `EXPLAIN (ANALYZE, BUFFERS)` and tune indexes/query shape rather than weakening the target.
 - [ ] Commit only after the 1M gate is GREEN.
 
-### Task 5: Performance record and exact-head verification
+### Task 6: Performance record and exact-head verification
 
 **Files:**
 - Create: `docs/performance/optimization-pr4-fast-search-apis.md`
