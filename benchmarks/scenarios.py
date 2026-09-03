@@ -285,8 +285,7 @@ def _seed_postgres_search_releases(engine: Any, scale: int) -> None:
             ),
             {"scale": scale},
         )
-    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
-        connection.execute(text("VACUUM (ANALYZE) releases"))
+        connection.execute(text("ANALYZE releases"))
 
 
 def postgres_search_needle(scale: int) -> str:
