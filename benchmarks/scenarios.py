@@ -24,6 +24,7 @@ from lorex.library.importer import LibraryImporter
 from lorex.main import create_app
 from lorex.postgres_repository import PostgresReleaseRepository
 from lorex.repository import LibraryRepository, ReleaseRepository
+from lorex.search import ReleaseSearchQuery
 from lorex.services.indexing import IndexBatch, index_batches
 
 _INDEX_HEADER_BATCH_SIZE = 2048
@@ -124,7 +125,7 @@ def benchmark_release_search_api(scale: int, samples: int) -> dict[str, Any]:
         def operation() -> int:
             response = client.get("/api/releases/search", params={"q": needle})
             response.raise_for_status()
-            return response.json()["count"]
+            return response.json()["total"]
 
         timing = measure_samples("release_search_api", operation, samples=samples, warmups=1)
 
@@ -251,6 +252,65 @@ def benchmark_postgres_index_lookup(scale: int, samples: int) -> dict[str, Any]:
     )
 
 
+def _seed_postgres_search_releases(engine: Any, scale: int) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO releases (
+                    id, title, normalized_title, author, normalized_author,
+                    narrator, format, size, completion, source_subject, nzb,
+                    fingerprint, wanted_key, download_status, import_status, posted_at
+                )
+                SELECT
+                    md5(n::text),
+                    'Benchmark Audiobook ' || n,
+                    'benchmark audiobook ' || n,
+                    'Benchmark Author ' || (n % 1000),
+                    'benchmark author ' || (n % 1000),
+                    'Benchmark Narrator ' || (n % 100),
+                    CASE WHEN n % 2 = 0 THEN 'm4b' ELSE 'mp3' END,
+                    100000000 + n,
+                    1.0,
+                    'Benchmark Subject unique-tail-' || n,
+                    '',
+                    md5(n::text),
+                    'benchmark|' || n,
+                    CASE WHEN n % 3 = 0 THEN 'completed' ELSE 'queued' END,
+                    CASE WHEN n % 5 = 0 THEN 'imported' ELSE 'pending' END,
+                    TIMESTAMPTZ '2026-01-01 00:00:00+00' + n * INTERVAL '1 second'
+                FROM generate_series(1, :scale) AS generated(n)
+                """
+            ),
+            {"scale": scale},
+        )
+        connection.execute(text("ANALYZE releases"))
+
+
+def benchmark_postgres_release_search(scale: int, samples: int) -> dict[str, Any]:
+    engine, repository = _postgres_repository()
+    _truncate_postgres_releases(engine)
+    _seed_postgres_search_releases(engine, scale)
+    query = ReleaseSearchQuery(q=f"unique-tail-{scale}", limit=50, sort="posted_at", order="desc")
+
+    try:
+        def operation() -> int:
+            return repository.search_page(query).total
+
+        timing = measure_samples("postgres_release_search", operation, samples=samples, warmups=1)
+    finally:
+        engine.dispose()
+
+    return _result(
+        "postgres_release_search",
+        scale,
+        "releases",
+        1,
+        timing,
+        note="Set-based PostgreSQL fixture seed and ANALYZE are excluded; measures a unique near-tail trigram search.",
+    )
+
+
 ScenarioFunction = Callable[[int, int], dict[str, Any]]
 
 SCENARIOS: dict[str, ScenarioFunction] = {
@@ -263,4 +323,5 @@ SCENARIOS: dict[str, ScenarioFunction] = {
     "library_importer": benchmark_library_importer,
     "postgres_bulk_index": benchmark_postgres_bulk_index,
     "postgres_index_lookup": benchmark_postgres_index_lookup,
+    "postgres_release_search": benchmark_postgres_release_search,
 }
