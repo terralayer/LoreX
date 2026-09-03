@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections import deque
 from collections.abc import Callable, Iterator
 from hashlib import md5
 from tempfile import TemporaryDirectory
@@ -161,7 +162,7 @@ def benchmark_queue_roundtrip(scale: int, samples: int) -> dict[str, Any]:
         "jobs",
         scale * 2,
         timing,
-        note="Legacy PR1-compatible enqueue + FIFO drain reference.",
+        note="Historical PR1-shaped enqueue + drain diagnostic; PR5 claim bookkeeping makes the old 107 ms absolute timing non-comparable.",
     )
 
 
@@ -180,7 +181,47 @@ def benchmark_queue_deque_roundtrip(scale: int, samples: int) -> dict[str, Any]:
         "jobs",
         scale * 2,
         timing,
-        note="Deque-backed compatibility queue; no O(n) list-head removal.",
+        note="Full PR5 in-memory compatibility lifecycle with deque FIFO plus claim/status bookkeeping.",
+    )
+
+
+def benchmark_legacy_list_head_removal(scale: int, samples: int) -> dict[str, Any]:
+    def operation() -> int:
+        values = list(range(scale))
+        processed = 0
+        while values:
+            values.pop(0)
+            processed += 1
+        return processed
+
+    timing = measure_samples("legacy_list_head_removal", operation, samples=samples, warmups=0)
+    return _result(
+        "legacy_list_head_removal",
+        scale,
+        "head-removals",
+        scale,
+        timing,
+        note="Benchmark-only reproduction of the removed O(n) list.pop(0) queue-head algorithm; not a production code path.",
+    )
+
+
+def benchmark_deque_head_removal(scale: int, samples: int) -> dict[str, Any]:
+    def operation() -> int:
+        values = deque(range(scale))
+        processed = 0
+        while values:
+            values.popleft()
+            processed += 1
+        return processed
+
+    timing = measure_samples("deque_head_removal", operation, samples=samples, warmups=0)
+    return _result(
+        "deque_head_removal",
+        scale,
+        "head-removals",
+        scale,
+        timing,
+        note="Apples-to-apples queue-head algorithm benchmark using deque.popleft() at the same scale as the legacy reference.",
     )
 
 
@@ -550,6 +591,8 @@ SCENARIOS: dict[str, ScenarioFunction] = {
     "release_search_api": benchmark_release_search_api,
     "queue_roundtrip": benchmark_queue_roundtrip,
     "queue_deque_roundtrip": benchmark_queue_deque_roundtrip,
+    "legacy_list_head_removal": benchmark_legacy_list_head_removal,
+    "deque_head_removal": benchmark_deque_head_removal,
     "mock_downloader": benchmark_mock_downloader,
     "library_importer": benchmark_library_importer,
     "postgres_bulk_index": benchmark_postgres_bulk_index,
