@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -14,6 +14,7 @@ from lorex.db_models import (
     ReleaseRow,
 )
 from lorex.domain import ArticleHeader, DownloadJob, IndexCheckpoint, IndexedRelease, LibraryBook
+from lorex.search import ReleaseSearchPage, ReleaseSearchQuery, ReleaseSummary
 
 _POSTGRES_BIND_BUDGET = 60_000
 _RELEASE_BIND_COLUMNS = 13
@@ -210,6 +211,68 @@ class PostgresReleaseRepository:
                 )
             rows = session.execute(statement.order_by(ReleaseRow.id)).scalars()
             return [_to_release(row) for row in rows]
+
+    def search_page(self, query: ReleaseSearchQuery) -> ReleaseSearchPage:
+        filters = []
+        needle = query.q.casefold().strip()
+        if needle:
+            pattern = f"%{needle}%"
+            filters.append(
+                or_(
+                    ReleaseRow.normalized_title.ilike(pattern),
+                    ReleaseRow.normalized_author.ilike(pattern),
+                    ReleaseRow.narrator.ilike(pattern),
+                    ReleaseRow.source_subject.ilike(pattern),
+                )
+            )
+        if query.format is not None:
+            filters.append(ReleaseRow.format == query.format)
+        if query.download_status is not None:
+            filters.append(ReleaseRow.download_status == query.download_status)
+        if query.import_status is not None:
+            filters.append(ReleaseRow.import_status == query.import_status)
+
+        sort_columns = {
+            "title": ReleaseRow.normalized_title,
+            "author": ReleaseRow.normalized_author,
+            "narrator": ReleaseRow.narrator,
+            "format": ReleaseRow.format,
+            "size": ReleaseRow.size,
+            "completion": ReleaseRow.completion,
+            "posted_at": ReleaseRow.posted_at,
+        }
+        sort_column = sort_columns[query.sort]
+        direction = "desc" if query.order == "desc" else "asc"
+        ordering = (getattr(sort_column, direction)(), getattr(ReleaseRow.id, direction)())
+
+        with self._sessions() as session:
+            total = session.scalar(select(func.count()).select_from(ReleaseRow).where(*filters)) or 0
+            statement = (
+                select(
+                    ReleaseRow.id,
+                    ReleaseRow.title,
+                    ReleaseRow.author,
+                    ReleaseRow.narrator,
+                    ReleaseRow.format,
+                    ReleaseRow.size,
+                    ReleaseRow.completion,
+                    ReleaseRow.download_status,
+                    ReleaseRow.import_status,
+                    ReleaseRow.posted_at,
+                )
+                .where(*filters)
+                .order_by(*ordering)
+                .limit(query.limit)
+                .offset(query.offset)
+            )
+            results = tuple(ReleaseSummary(*row) for row in session.execute(statement))
+
+        return ReleaseSearchPage(
+            total=total,
+            limit=query.limit,
+            offset=query.offset,
+            results=results,
+        )
 
 
 class PostgresLibraryRepository:
