@@ -27,11 +27,16 @@ def test_smoke_suite_has_stable_schema_and_scenarios(tmp_path) -> None:
         "release_search",
         "release_search_api",
         "queue_roundtrip",
+        "queue_deque_roundtrip",
         "mock_downloader",
         "library_importer",
         "postgres_bulk_index",
         "postgres_index_lookup",
         "postgres_release_search",
+        "postgres_queue_claim_transition",
+        "streaming_downloader_memory",
+        "streaming_downloader_throughput",
+        "progress_coalescing",
     ]
     for scenario in report["scenarios"]:
         assert scenario["scale"] > 0
@@ -49,6 +54,9 @@ def test_smoke_suite_has_stable_schema_and_scenarios(tmp_path) -> None:
     assert "postgres_bulk_index" in markdown
     assert "postgres_index_lookup" in markdown
     assert "postgres_release_search" in markdown
+    assert "postgres_queue_claim_transition" in markdown
+    assert "streaming_downloader_memory" in markdown
+    assert "progress_coalescing" in markdown
 
 
 def test_frontend_build_size_is_embedded_in_json_and_markdown(tmp_path) -> None:
@@ -106,3 +114,22 @@ def test_ci_gate_accepts_fast_million_release_search() -> None:
     }
 
     runner.enforce_performance_gates(report)
+
+
+def test_pr5_gates_reject_queue_memory_and_progress_regressions() -> None:
+    runner = _runner_module()
+
+    with pytest.raises(RuntimeError, match="queue_deque_roundtrip"):
+        runner.enforce_performance_gates(
+            {"scenarios": [{"name": "queue_deque_roundtrip", "scale": 10_000, "timing": {"p95_ms": 107.0}}]}
+        )
+
+    with pytest.raises(RuntimeError, match="peak Python allocation"):
+        runner.enforce_performance_gates(
+            {"scenarios": [{"name": "streaming_downloader_memory", "scale": 64, "timing": {"peak_python_mb": 16.0}}]}
+        )
+
+    with pytest.raises(RuntimeError, match="write reduction"):
+        runner.enforce_performance_gates(
+            {"scenarios": [{"name": "progress_coalescing", "scale": 10_000, "write_reduction_ratio": 0.899}]}
+        )
