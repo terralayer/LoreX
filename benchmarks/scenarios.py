@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from hashlib import md5
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -272,7 +273,7 @@ def _seed_postgres_search_releases(engine: Any, scale: int) -> None:
                     CASE WHEN n % 2 = 0 THEN 'm4b' ELSE 'mp3' END,
                     100000000 + n,
                     1.0,
-                    'Benchmark Subject unique-tail-' || n,
+                    'Benchmark Subject search-token-' || md5(n::text),
                     '',
                     md5(n::text),
                     'benchmark|' || n,
@@ -285,6 +286,10 @@ def _seed_postgres_search_releases(engine: Any, scale: int) -> None:
             {"scale": scale},
         )
         connection.execute(text("ANALYZE releases"))
+
+
+def postgres_search_needle(scale: int) -> str:
+    return md5(str(scale).encode("ascii"), usedforsecurity=False).hexdigest()
 
 
 def _postgres_search_plan(engine: Any, needle: str) -> str:
@@ -313,11 +318,14 @@ def benchmark_postgres_release_search(scale: int, samples: int) -> dict[str, Any
     engine, repository = _postgres_repository()
     _truncate_postgres_releases(engine)
     _seed_postgres_search_releases(engine, scale)
-    query = ReleaseSearchQuery(q=f"unique-tail-{scale}", limit=50, sort="posted_at", order="desc")
+    query = ReleaseSearchQuery(q=postgres_search_needle(scale), limit=50, sort="posted_at", order="desc")
 
     try:
         def operation() -> int:
-            return repository.search_page(query).total
+            total = repository.search_page(query).total
+            if total != 1:
+                raise RuntimeError(f"expected one selective search result, found {total}")
+            return total
 
         timing = measure_samples("postgres_release_search", operation, samples=samples, warmups=1)
         plan = _postgres_search_plan(engine, query.q) if scale == 1_000_000 else None
