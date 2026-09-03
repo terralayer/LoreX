@@ -95,9 +95,15 @@ jobs:
           set -o pipefail
           mkdir -p benchmark-results
           python -m benchmarks.run_baseline --profile ci --output benchmark-results --frontend-dist frontend/dist 2>&1 | tee benchmark-results/runner.log
+          python -m benchmarks.run_pr6 --output benchmark-results 2>&1 | tee benchmark-results/pr6-runner.log
       - name: Publish benchmark summary
         if: always() && hashFiles('benchmark-results/baseline.md') != ''
-        run: cat benchmark-results/baseline.md >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          cat benchmark-results/baseline.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -f benchmark-results/pr6-importer.md ]; then
+            printf '\n' >> "$GITHUB_STEP_SUMMARY"
+            cat benchmark-results/pr6-importer.md >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Upload benchmark artifact
         if: always() && hashFiles('benchmark-results/**') != ''
         uses: actions/upload-artifact@v4

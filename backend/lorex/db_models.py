@@ -135,8 +135,23 @@ class ProviderHealthRow(Base):
 
 class ImportJobRow(Base):
     __tablename__ = "import_jobs"
-    __table_args__ = (Index("ix_import_jobs_status", "status"),)
+    __table_args__ = (Index("ix_import_jobs_status_created", "status", "created_order"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     release_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    source_path: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    staging_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    final_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stage: Mapped[str] = mapped_column(String(32), nullable=False, default="verify")
+    created_order: Mapped[int] = mapped_column(BigInteger, Identity(), nullable=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    wall_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cpu_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    temp_bytes_peak: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    bytes_copied: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
