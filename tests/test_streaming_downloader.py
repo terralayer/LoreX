@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha1
 from pathlib import Path
 
 from lorex.domain import ArticleHeader, DownloadJob, IndexedRelease
@@ -61,6 +62,11 @@ def _release() -> IndexedRelease:
     )
 
 
+def _article_part_name(message_id: str) -> str:
+    key = sha1(message_id.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+    return f"article-{key}.part.complete"
+
+
 def test_downloader_streams_article_to_disk_and_marks_job_complete(tmp_path: Path) -> None:
     provider = RepeatingChunkProvider(chunks=16)
     state = MemoryState()
@@ -81,10 +87,25 @@ def test_downloader_streams_article_to_disk_and_marks_job_complete(tmp_path: Pat
     assert state.completed == {"<article-1>"}
     assert state.job_status["job-1"] == "completed"
     assert provider.max_materialized_chunks == 1
-    assert (tmp_path / "job-1" / "article-000000.part.complete").stat().st_size == 16 * 65536
+    assert (tmp_path / "job-1" / _article_part_name(article.message_id)).stat().st_size == 16 * 65536
 
 
-def test_downloader_skips_completed_articles_on_resume(tmp_path: Path) -> None:
+def test_article_part_name_depends_on_message_id_not_pending_order(tmp_path: Path) -> None:
+    provider = RepeatingChunkProvider(chunks=1)
+    state = MemoryState()
+    providers = ProviderSet(
+        [ProviderConfig("primary", "primary.example")],
+        clients={"primary": provider},
+    )
+    downloader = StreamingDownloader(providers, state, DownloaderConfig(download_root=tmp_path))
+    article = ArticleHeader("<article-2>", "subject", 65536)
+
+    downloader.download_job(DownloadJob("job-1", "release-1"), _release(), [article])
+
+    assert (tmp_path / "job-1" / _article_part_name(article.message_id)).is_file()
+
+
+def test_downloader_skips_completed_articles_on_resume_but_reports_full_release_bytes(tmp_path: Path) -> None:
     provider = RepeatingChunkProvider(chunks=1)
     state = MemoryState()
     state.completed.add("<article-1>")
@@ -97,4 +118,4 @@ def test_downloader_skips_completed_articles_on_resume(tmp_path: Path) -> None:
 
     result = downloader.download_job(DownloadJob("job-1", "release-1"), _release(), [article])
 
-    assert result.size == 0
+    assert result.size == 65536
