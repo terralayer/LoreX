@@ -58,6 +58,17 @@ class AlwaysFailProvider:
         raise ProviderError(self.name, "temporary", transient=True)
 
 
+class BusyThenUnavailableLeaseCoordinator:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def acquire(self, lookup_key: str):
+        self.calls += 1
+        if self.calls == 1:
+            return None
+        raise ConnectionError("redis unavailable")
+
+
 def test_one_hundred_same_key_callers_share_one_upstream_request():
     provider = CountingProvider()
     metrics = MetadataMetrics()
@@ -165,3 +176,32 @@ def test_two_resolver_instances_share_one_upstream_request_through_redis():
     assert provider.calls == 1
     assert all(result is not None and result.title == "Project Hail Mary" for result in results)
     assert metrics_a.snapshot()["coalesced_followers"] + metrics_b.snapshot()["coalesced_followers"] >= 1
+
+
+def test_redis_failure_during_follower_wait_falls_back_to_local_leader():
+    provider = CountingProvider(delay=0)
+    coordinator = BusyThenUnavailableLeaseCoordinator()
+    resolver = MetadataResolver(
+        cache=InMemoryMetadataCache(),
+        providers=(provider,),
+        lease_coordinator=coordinator,
+        follower_wait=0.1,
+        poll_interval=0.001,
+    )
+
+    result = resolver.resolve(MetadataLookup(title="Book", authors=("Author",)))
+
+    assert result is not None
+    assert result.title == "Project Hail Mary"
+    assert provider.calls == 1
+
+
+def test_unique_lookup_locks_are_released_after_use():
+    provider = CountingProvider(delay=0)
+    resolver = MetadataResolver(cache=InMemoryMetadataCache(), providers=(provider,))
+
+    for index in range(200):
+        result = resolver.resolve(MetadataLookup(title=f"Book {index}", authors=("Author",)))
+        assert result is not None
+
+    assert resolver._key_locks == {}
