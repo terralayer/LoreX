@@ -71,6 +71,7 @@ def _optimized_preserve_run(scale: int) -> tuple[int, int]:
             remux=lambda source, target: None,
             transcode=lambda source, target: None,
             tag=lambda path, result: None,
+            cleanup=lambda source, staged, destination: None,
         )
         sources: list[Path] = []
         for index in range(scale):
