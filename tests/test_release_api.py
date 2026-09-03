@@ -66,3 +66,16 @@ def test_release_detail_returns_404(client):
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Release not found"}
+
+
+def test_dashboard_summary_returns_counts_without_release_rows(client, mock_headers):
+    client.post("/api/index/mock", json={"headers": mock_headers})
+
+    response = client.get("/api/library/dashboard")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "total_releases": 1,
+        "download_statuses": {"untracked": 1},
+        "import_statuses": {"untracked": 1},
+    }

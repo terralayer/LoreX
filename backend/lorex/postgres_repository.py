@@ -14,7 +14,7 @@ from lorex.db_models import (
     ReleaseRow,
 )
 from lorex.domain import ArticleHeader, DownloadJob, IndexCheckpoint, IndexedRelease, LibraryBook
-from lorex.search import ReleaseSearchPage, ReleaseSearchQuery, ReleaseSummary
+from lorex.search import DashboardSummary, ReleaseSearchPage, ReleaseSearchQuery, ReleaseSummary
 
 _POSTGRES_BIND_BUDGET = 60_000
 _RELEASE_BIND_COLUMNS = 13
@@ -273,6 +273,23 @@ class PostgresReleaseRepository:
             offset=query.offset,
             results=results,
         )
+
+    def dashboard_summary(self) -> DashboardSummary:
+        download_status = func.coalesce(ReleaseRow.download_status, "untracked")
+        import_status = func.coalesce(ReleaseRow.import_status, "untracked")
+        with self._sessions() as session:
+            total = session.scalar(select(func.count()).select_from(ReleaseRow)) or 0
+            download_counts = dict(
+                session.execute(
+                    select(download_status, func.count()).group_by(download_status)
+                ).all()
+            )
+            import_counts = dict(
+                session.execute(
+                    select(import_status, func.count()).group_by(import_status)
+                ).all()
+            )
+        return DashboardSummary(total, download_counts, import_counts)
 
 
 class PostgresLibraryRepository:

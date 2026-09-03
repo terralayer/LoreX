@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.pool import StaticPool
 
 from lorex.db import session_factory
@@ -105,3 +105,24 @@ def test_search_page_sorts_descending_with_stable_id_tie_breaker(repository):
     page = repository.search_page(ReleaseSearchQuery(q="project", sort="title", order="desc"))
 
     assert [item.id for item in page.results] == ["release-2", "release-1"]
+
+
+def test_dashboard_summary_uses_three_bounded_aggregate_queries(repository):
+    statements: list[str] = []
+    engine = repository._sessions.kw["bind"]
+
+    def record_statement(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record_statement)
+    try:
+        summary = repository.dashboard_summary()
+    finally:
+        event.remove(engine, "before_cursor_execute", record_statement)
+
+    assert summary.total_releases == 3
+    assert summary.download_statuses == {"completed": 2, "queued": 1}
+    assert summary.import_statuses == {"imported": 1, "pending": 2}
+    assert len(statements) == 3
+    assert all("SELECT releases.id" not in statement for statement in statements)

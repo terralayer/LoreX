@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from lorex.domain import ArticleHeader, DownloadJob, IndexCheckpoint, IndexedRelease, LibraryBook
-from lorex.search import ReleaseSearchPage, ReleaseSearchQuery, ReleaseSummary
+from lorex.search import DashboardSummary, ReleaseSearchPage, ReleaseSearchQuery, ReleaseSummary
 
 
 @dataclass(slots=True)
@@ -111,6 +111,13 @@ class ReleaseRepository:
             for item in values
         )
         return ReleaseSearchPage(total, query.limit, query.offset, summaries)
+
+    def dashboard_summary(self) -> DashboardSummary:
+        return DashboardSummary(
+            total_releases=len(self._items),
+            download_statuses={"untracked": len(self._items)} if self._items else {},
+            import_statuses={"untracked": len(self._items)} if self._items else {},
+        )
 
 
 @dataclass(slots=True)

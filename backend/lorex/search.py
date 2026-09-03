@@ -49,3 +49,10 @@ class ReleaseSearchPage:
     limit: int
     offset: int
     results: tuple[ReleaseSummary, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardSummary:
+    total_releases: int
+    download_statuses: dict[str, int]
+    import_statuses: dict[str, int]
