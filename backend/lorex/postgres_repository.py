@@ -1,19 +1,29 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
+from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from lorex.db_models import (
+    DownloadArticleRow,
     DownloadJobRow,
     IndexerCheckpointRow,
     LibraryBookRow,
+    ProviderHealthRow,
     ReleaseArticleRow,
     ReleaseRow,
 )
-from lorex.domain import ArticleHeader, DownloadJob, IndexCheckpoint, IndexedRelease, LibraryBook
+from lorex.domain import (
+    ArticleHeader,
+    DownloadJob,
+    IndexCheckpoint,
+    IndexedRelease,
+    LibraryBook,
+    ProviderHealthSnapshot,
+)
 from lorex.search import DashboardSummary, ReleaseSearchPage, ReleaseSearchQuery, ReleaseSummary
 
 _POSTGRES_BIND_BUDGET = 60_000
@@ -108,10 +118,7 @@ class PostgresReleaseRepository:
                     )
                     .with_for_update()
                 ).scalar_one_or_none()
-                if (
-                    checkpoint_row is not None
-                    and checkpoint.article_number < checkpoint_row.article_number
-                ):
+                if checkpoint_row is not None and checkpoint.article_number < checkpoint_row.article_number:
                     raise ValueError("checkpoint cannot move backwards")
 
             inserted_ids: set[str] = set()
@@ -185,9 +192,7 @@ class PostgresReleaseRepository:
 
     def get_cached_nzb(self, release_id: str) -> str | None:
         with self._sessions() as session:
-            nzb = session.execute(
-                select(ReleaseRow.nzb).where(ReleaseRow.id == release_id)
-            ).scalar_one_or_none()
+            nzb = session.execute(select(ReleaseRow.nzb).where(ReleaseRow.id == release_id)).scalar_one_or_none()
             return nzb or None
 
     def cache_nzb(self, release_id: str, nzb: str) -> str:
@@ -267,28 +272,15 @@ class PostgresReleaseRepository:
             )
             results = tuple(ReleaseSummary(*row) for row in session.execute(statement))
 
-        return ReleaseSearchPage(
-            total=total,
-            limit=query.limit,
-            offset=query.offset,
-            results=results,
-        )
+        return ReleaseSearchPage(total=total, limit=query.limit, offset=query.offset, results=results)
 
     def dashboard_summary(self) -> DashboardSummary:
         download_status = func.coalesce(ReleaseRow.download_status, "untracked")
         import_status = func.coalesce(ReleaseRow.import_status, "untracked")
         with self._sessions() as session:
             total = session.scalar(select(func.count()).select_from(ReleaseRow)) or 0
-            download_counts = dict(
-                session.execute(
-                    select(download_status, func.count()).group_by(download_status)
-                ).all()
-            )
-            import_counts = dict(
-                session.execute(
-                    select(import_status, func.count()).group_by(import_status)
-                ).all()
-            )
+            download_counts = dict(session.execute(select(download_status, func.count()).group_by(download_status)).all())
+            import_counts = dict(session.execute(select(import_status, func.count()).group_by(import_status)).all())
         return DashboardSummary(total, download_counts, import_counts)
 
 
@@ -317,9 +309,7 @@ class PostgresLibraryRepository:
 
     def all(self) -> list[LibraryBook]:
         with self._sessions() as session:
-            rows = session.execute(
-                select(LibraryBookRow).order_by(LibraryBookRow.author, LibraryBookRow.title)
-            ).scalars()
+            rows = session.execute(select(LibraryBookRow).order_by(LibraryBookRow.author, LibraryBookRow.title)).scalars()
             return [
                 LibraryBook(
                     id=row.id,
@@ -339,20 +329,32 @@ class PostgresJobRepository:
         self._sessions = sessions
 
     def add(self, job: DownloadJob) -> DownloadJob:
+        now = datetime.now(UTC)
         with self._sessions.begin() as session:
             statement = pg_insert(DownloadJobRow).values(
                 id=job.id,
                 release_id=job.release_id,
                 status=job.status,
+                bytes_completed=0,
+                articles_completed=0,
+                updated_at=now,
             )
             statement = statement.on_conflict_do_update(
                 index_elements=[DownloadJobRow.id],
-                set_={"release_id": job.release_id, "status": job.status},
+                set_={"release_id": job.release_id, "status": job.status, "updated_at": now},
             )
             session.execute(statement)
         return job
 
-    def pop_next(self) -> DownloadJob | None:
+    def get(self, job_id: str) -> DownloadJob | None:
+        with self._sessions() as session:
+            row = session.get(DownloadJobRow, job_id)
+            if row is None:
+                return None
+            return DownloadJob(id=row.id, release_id=row.release_id, status=row.status)
+
+    def claim_next(self, worker_id: str) -> DownloadJob | None:
+        now = datetime.now(UTC)
         with self._sessions.begin() as session:
             row = session.execute(
                 select(DownloadJobRow)
@@ -363,6 +365,202 @@ class PostgresJobRepository:
             ).scalar_one_or_none()
             if row is None:
                 return None
-            job = DownloadJob(id=row.id, release_id=row.release_id, status=row.status)
-            session.execute(delete(DownloadJobRow).where(DownloadJobRow.id == row.id))
-            return job
+            row.status = "downloading"
+            row.claimed_at = now
+            row.claimed_by = worker_id
+            row.updated_at = now
+            session.flush()
+            return DownloadJob(id=row.id, release_id=row.release_id, status=row.status)
+
+    def pop_next(self) -> DownloadJob | None:
+        return self.claim_next("compat")
+
+    def mark_completed(self, job_id: str) -> None:
+        self._set_status(job_id, "completed")
+
+    def mark_failed(self, job_id: str) -> None:
+        self._set_status(job_id, "failed")
+
+    def _set_status(self, job_id: str, status: str) -> None:
+        now = datetime.now(UTC)
+        with self._sessions.begin() as session:
+            session.execute(
+                update(DownloadJobRow)
+                .where(DownloadJobRow.id == job_id)
+                .values(status=status, claimed_at=None, claimed_by=None, updated_at=now)
+            )
+
+    def recover_stale(self, stale_before: datetime) -> int:
+        now = datetime.now(UTC)
+        with self._sessions.begin() as session:
+            result = session.execute(
+                update(DownloadJobRow)
+                .where(
+                    DownloadJobRow.status == "downloading",
+                    DownloadJobRow.claimed_at.is_not(None),
+                    DownloadJobRow.claimed_at < stale_before,
+                )
+                .values(status="queued", claimed_at=None, claimed_by=None, updated_at=now)
+            )
+            return int(result.rowcount or 0)
+
+    def ensure_articles(self, job_id: str, articles: Iterable[ArticleHeader]) -> int:
+        materialized = tuple(articles)
+        if not materialized:
+            return 0
+        now = datetime.now(UTC)
+        values = [
+            {
+                "job_id": job_id,
+                "message_id": article.message_id,
+                "status": "pending",
+                "bytes_completed": 0,
+                "attempts": 0,
+                "updated_at": now,
+            }
+            for article in materialized
+        ]
+        with self._sessions.begin() as session:
+            statement = (
+                pg_insert(DownloadArticleRow)
+                .values(values)
+                .on_conflict_do_nothing(constraint="ux_download_articles_job_message")
+                .returning(DownloadArticleRow.id)
+            )
+            return len(tuple(session.execute(statement).scalars()))
+
+    def pending_articles(self, job_id: str, articles: Iterable[ArticleHeader]) -> tuple[ArticleHeader, ...]:
+        materialized = tuple(articles)
+        self.ensure_articles(job_id, materialized)
+        with self._sessions() as session:
+            completed = set(
+                session.execute(
+                    select(DownloadArticleRow.message_id).where(
+                        DownloadArticleRow.job_id == job_id,
+                        DownloadArticleRow.status == "completed",
+                    )
+                ).scalars()
+            )
+        return tuple(article for article in materialized if article.message_id not in completed)
+
+    def mark_article_started(self, job_id: str, message_id: str, provider: str) -> None:
+        now = datetime.now(UTC)
+        with self._sessions.begin() as session:
+            session.execute(
+                update(DownloadArticleRow)
+                .where(DownloadArticleRow.job_id == job_id, DownloadArticleRow.message_id == message_id)
+                .values(
+                    status="in_progress",
+                    provider=provider,
+                    attempts=DownloadArticleRow.attempts + 1,
+                    updated_at=now,
+                )
+            )
+
+    def mark_article_completed(
+        self,
+        job_id: str,
+        message_id: str,
+        provider: str,
+        bytes_completed: int,
+    ) -> None:
+        now = datetime.now(UTC)
+        with self._sessions.begin() as session:
+            session.execute(
+                update(DownloadArticleRow)
+                .where(DownloadArticleRow.job_id == job_id, DownloadArticleRow.message_id == message_id)
+                .values(
+                    status="completed",
+                    provider=provider,
+                    bytes_completed=bytes_completed,
+                    updated_at=now,
+                )
+            )
+            session.execute(
+                update(DownloadJobRow)
+                .where(DownloadJobRow.id == job_id)
+                .values(articles_completed=DownloadJobRow.articles_completed + 1, updated_at=now)
+            )
+
+    def mark_article_failed(self, job_id: str, message_id: str, provider: str) -> None:
+        with self._sessions.begin() as session:
+            session.execute(
+                update(DownloadArticleRow)
+                .where(DownloadArticleRow.job_id == job_id, DownloadArticleRow.message_id == message_id)
+                .values(status="failed", provider=provider, updated_at=datetime.now(UTC))
+            )
+
+    def persist_job_progress(self, job_id: str, *, bytes_delta: int, articles_delta: int = 0) -> None:
+        with self._sessions.begin() as session:
+            session.execute(
+                update(DownloadJobRow)
+                .where(DownloadJobRow.id == job_id)
+                .values(
+                    bytes_completed=DownloadJobRow.bytes_completed + bytes_delta,
+                    articles_completed=DownloadJobRow.articles_completed + articles_delta,
+                    updated_at=datetime.now(UTC),
+                )
+            )
+
+    def persist_progress(self, byte_count: int) -> None:
+        return None
+
+    def progress(self, job_id: str) -> tuple[int, int]:
+        with self._sessions() as session:
+            row = session.execute(
+                select(DownloadJobRow.bytes_completed, DownloadJobRow.articles_completed).where(
+                    DownloadJobRow.id == job_id
+                )
+            ).one()
+            return int(row[0]), int(row[1])
+
+    def record_provider_attempt(
+        self,
+        provider: str,
+        *,
+        success: bool,
+        fallback: bool,
+        byte_count: int,
+        elapsed_ms: float,
+    ) -> None:
+        now = datetime.now(UTC)
+        values = {
+            "provider": provider,
+            "attempts": 1,
+            "successes": int(success),
+            "failures": int(not success),
+            "fallbacks": int(fallback),
+            "bytes_delivered": byte_count,
+            "elapsed_ms_total": elapsed_ms,
+            "updated_at": now,
+        }
+        with self._sessions.begin() as session:
+            statement = pg_insert(ProviderHealthRow).values(values)
+            statement = statement.on_conflict_do_update(
+                index_elements=[ProviderHealthRow.provider],
+                set_={
+                    "attempts": ProviderHealthRow.attempts + 1,
+                    "successes": ProviderHealthRow.successes + int(success),
+                    "failures": ProviderHealthRow.failures + int(not success),
+                    "fallbacks": ProviderHealthRow.fallbacks + int(fallback),
+                    "bytes_delivered": ProviderHealthRow.bytes_delivered + byte_count,
+                    "elapsed_ms_total": ProviderHealthRow.elapsed_ms_total + elapsed_ms,
+                    "updated_at": now,
+                },
+            )
+            session.execute(statement)
+
+    def provider_health(self, provider: str) -> ProviderHealthSnapshot:
+        with self._sessions() as session:
+            row = session.get(ProviderHealthRow, provider)
+            if row is None:
+                return ProviderHealthSnapshot(provider=provider)
+            return ProviderHealthSnapshot(
+                provider=row.provider,
+                attempts=row.attempts,
+                successes=row.successes,
+                failures=row.failures,
+                fallbacks=row.fallbacks,
+                bytes_delivered=row.bytes_delivered,
+                elapsed_ms_total=row.elapsed_ms_total,
+            )
