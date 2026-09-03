@@ -131,7 +131,13 @@ def process_next_download(request: Request) -> dict:
         raise HTTPException(status_code=404, detail="No queued downloads")
     release = container.releases.get(job.release_id)
     if release is None:
+        container.jobs.mark_failed(job.id)
         raise HTTPException(status_code=409, detail="Queued release no longer exists")
-    result = container.downloader.download(release)
-    book = container.importer.import_download(result)
+    try:
+        result = container.downloader.download(release)
+        book = container.importer.import_download(result)
+    except Exception:
+        container.jobs.mark_failed(job.id)
+        raise
+    container.jobs.mark_completed(job.id)
     return {"job_id": job.id, "status": "completed", "book": asdict(book)}
