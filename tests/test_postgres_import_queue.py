@@ -8,7 +8,7 @@ import pytest
 
 from lorex.db import create_engine_from_url, session_factory
 from lorex.domain import ImportJob
-from lorex.postgres_repository import PostgresImportJobRepository
+from lorex.import_repository import PostgresImportJobRepository
 
 
 @pytest.fixture()
