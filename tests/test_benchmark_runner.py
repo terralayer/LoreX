@@ -31,6 +31,7 @@ def test_smoke_suite_has_stable_schema_and_scenarios(tmp_path) -> None:
         "library_importer",
         "postgres_bulk_index",
         "postgres_index_lookup",
+        "postgres_release_search",
     ]
     for scenario in report["scenarios"]:
         assert scenario["scale"] > 0
@@ -47,6 +48,7 @@ def test_smoke_suite_has_stable_schema_and_scenarios(tmp_path) -> None:
     assert "library_importer" in markdown
     assert "postgres_bulk_index" in markdown
     assert "postgres_index_lookup" in markdown
+    assert "postgres_release_search" in markdown
 
 
 def test_frontend_build_size_is_embedded_in_json_and_markdown(tmp_path) -> None:
@@ -73,3 +75,34 @@ def test_unknown_profile_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="unknown benchmark profile"):
         runner.run_suite("not-a-profile")
+
+
+def test_ci_gate_rejects_slow_million_release_search() -> None:
+    runner = _runner_module()
+    report = {
+        "scenarios": [
+            {
+                "name": "postgres_release_search",
+                "scale": 1_000_000,
+                "timing": {"p95_ms": 150.0},
+            }
+        ]
+    }
+
+    with pytest.raises(RuntimeError, match="p95.*150"):
+        runner.enforce_performance_gates(report)
+
+
+def test_ci_gate_accepts_fast_million_release_search() -> None:
+    runner = _runner_module()
+    report = {
+        "scenarios": [
+            {
+                "name": "postgres_release_search",
+                "scale": 1_000_000,
+                "timing": {"p95_ms": 149.999},
+            }
+        ]
+    }
+
+    runner.enforce_performance_gates(report)

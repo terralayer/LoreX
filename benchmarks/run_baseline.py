@@ -11,6 +11,7 @@ from benchmarks.frontend_size import collect_frontend_size
 from benchmarks.scenarios import SCENARIOS
 
 PRODUCT_VERSION = "0.1.1 alpha"
+POSTGRES_MILLION_SEARCH_P95_LIMIT_MS = 150.0
 
 _PROFILE_CONFIGS: dict[str, list[tuple[str, int, int]]] = {
     "smoke": [
@@ -23,6 +24,7 @@ _PROFILE_CONFIGS: dict[str, list[tuple[str, int, int]]] = {
         ("library_importer", 20, 1),
         ("postgres_bulk_index", 100, 1),
         ("postgres_index_lookup", 1_000, 3),
+        ("postgres_release_search", 1_000, 3),
     ],
     "ci": [
         ("index_headers", 10_000, 2),
@@ -39,8 +41,21 @@ _PROFILE_CONFIGS: dict[str, list[tuple[str, int, int]]] = {
         ("library_importer", 10_000, 2),
         ("postgres_bulk_index", 10_000, 1),
         ("postgres_index_lookup", 10_000, 10),
+        ("postgres_release_search", 100_000, 10),
+        ("postgres_release_search", 1_000_000, 10),
     ],
 }
+
+
+def enforce_performance_gates(report: dict[str, Any]) -> None:
+    for scenario in report["scenarios"]:
+        if scenario["name"] == "postgres_release_search" and scenario["scale"] == 1_000_000:
+            p95_ms = scenario["timing"]["p95_ms"]
+            if p95_ms >= POSTGRES_MILLION_SEARCH_P95_LIMIT_MS:
+                raise RuntimeError(
+                    f"postgres_release_search p95 {p95_ms:.3f} ms must be below "
+                    f"{POSTGRES_MILLION_SEARCH_P95_LIMIT_MS:.0f} ms at 1,000,000 releases"
+                )
 
 
 def run_suite(profile: str) -> dict[str, Any]:
@@ -53,7 +68,7 @@ def run_suite(profile: str) -> dict[str, Any]:
         scenarios.append(SCENARIOS[name](scale, samples))
         gc.collect()
 
-    return {
+    report = {
         "schema_version": 1,
         "product_version": PRODUCT_VERSION,
         "profile": profile,
@@ -68,10 +83,11 @@ def run_suite(profile: str) -> dict[str, Any]:
             "PR 1 records measurements only; it does not enforce timing thresholds.",
             "Synthetic data is generated deterministically from fixed seeds.",
             "Queue scale is bounded because the current baseline uses list pop(0) for FIFO removal.",
-            "The read-API scenario uses release search because a dashboard aggregate endpoint does not yet exist.",
+            "PostgreSQL search fixtures are seeded outside measured query latency using set-based SQL.",
             "PR 3 PostgreSQL scenarios run against the CI PostgreSQL 16 service after Alembic migrations.",
         ],
     }
+    return report
 
 
 def attach_frontend_size(report: dict[str, Any], dist: str | Path) -> dict[str, Any]:
@@ -153,6 +169,8 @@ def main() -> int:
     json_path, markdown_path = write_report(report, args.output)
     print(markdown_path.read_text(encoding="utf-8"))
     print(f"JSON report: {json_path}")
+    if args.profile == "ci":
+        enforce_performance_gates(report)
     return 0
 
 
