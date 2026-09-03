@@ -95,11 +95,9 @@ class MetadataResolver:
         if self.artwork_scheduler is None or not metadata.artwork_url:
             return
         try:
-            accepted = self.artwork_scheduler.submit(key, metadata.artwork_url)
+            self.artwork_scheduler.submit(key, metadata.artwork_url)
         except Exception:
             self.metrics.increment("artwork_dropped")
-            return
-        self.metrics.increment("artwork_scheduled" if accepted else "artwork_deduplicated")
 
     def _lookup_providers(
         self,
