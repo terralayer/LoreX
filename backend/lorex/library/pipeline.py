@@ -40,6 +40,7 @@ class ImportPipeline:
         remux: Callable[[Path, Path], None],
         transcode: Callable[[Path, Path], None],
         tag: Callable[[Path, DownloadResult], None],
+        cleanup: Callable[[Path, Path | None, Path], None],
     ) -> None:
         self.state = state
         self.library = library
@@ -53,6 +54,7 @@ class ImportPipeline:
         self.remux = remux
         self.transcode = transcode
         self.tag = tag
+        self.cleanup = cleanup
 
     def _set_staging_path(self, job_id: str, path: Path) -> None:
         setter = getattr(self.state, "set_staging_path", None)
@@ -65,6 +67,8 @@ class ImportPipeline:
         stage_rank = _STAGE_ORDER.get(job.stage)
         if stage_rank is None:
             raise ValueError(f"unknown import stage: {job.stage}")
+        if stage_rank >= _STAGE_ORDER["completed"]:
+            raise ValueError("completed import job cannot be processed again")
         destination: Path | None = None
         promoted_from: Path | None = None
 
@@ -116,8 +120,12 @@ class ImportPipeline:
             author = sanitize_component(result.author)
             title = sanitize_component(result.title)
             destination = self.library_root / author / title / f"{title}.m4b"
-            promoted_from = working
-            size = promote_verified_file(working, destination, self.verify)
+            if stage_rank >= 7 and destination.exists() and self.verify(destination):
+                size = destination.stat().st_size
+                promoted_from = None
+            else:
+                promoted_from = working
+                size = promote_verified_file(working, destination, self.verify)
 
             book_id = sha1(
                 f"{result.author}|{result.title}|{result.narrator or ''}".encode("utf-8")
@@ -140,8 +148,7 @@ class ImportPipeline:
                 raise
 
             self.state.mark_completed(job.id, final_path=str(destination))
-            if promoted_from != source:
-                source.unlink(missing_ok=True)
+            self.cleanup(source, Path(job.staging_path) if job.staging_path else None, destination)
             return stored
         except Exception as exc:
             self.state.mark_failed(job.id, error=str(exc))
