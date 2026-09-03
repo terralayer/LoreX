@@ -49,6 +49,30 @@ def upgrade() -> None:
         ["job_id", "status", "created_order"],
     )
 
+    op.execute(
+        """
+        CREATE FUNCTION lorex_sync_download_job_articles_completed()
+        RETURNS trigger AS $$
+        BEGIN
+            NEW.articles_completed := (
+                SELECT count(*)
+                FROM download_articles
+                WHERE job_id = NEW.id AND status = 'completed'
+            );
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER tr_download_jobs_articles_completed
+        BEFORE UPDATE OF articles_completed ON download_jobs
+        FOR EACH ROW
+        EXECUTE FUNCTION lorex_sync_download_job_articles_completed()
+        """
+    )
+
     op.create_table(
         "provider_health",
         sa.Column("provider", sa.String(length=128), primary_key=True),
@@ -64,6 +88,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("provider_health")
+    op.execute("DROP TRIGGER IF EXISTS tr_download_jobs_articles_completed ON download_jobs")
+    op.execute("DROP FUNCTION IF EXISTS lorex_sync_download_job_articles_completed()")
     op.drop_index("ix_download_articles_job_status", table_name="download_articles")
     op.drop_table("download_articles")
     op.drop_column("download_jobs", "updated_at")
