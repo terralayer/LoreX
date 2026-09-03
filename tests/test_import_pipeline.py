@@ -55,6 +55,7 @@ def _pipeline(tmp_path: Path, state: State, library: Library, calls: list[str], 
         remux=lambda src, dst: calls.append("remux"),
         transcode=lambda src, dst: calls.append("transcode"),
         tag=lambda path, result: calls.append("tag"),
+        cleanup=lambda source, staged, destination: calls.append("cleanup"),
     )
     kwargs.update(overrides)
     return ImportPipeline(**kwargs)
@@ -70,7 +71,7 @@ def test_valid_m4b_preserve_path_reaches_library_without_transcode(tmp_path: Pat
 
     assert book.path.endswith("/Author/Book/Book.m4b")
     assert state.completed is True
-    assert calls == ["tag"]
+    assert calls == ["tag", "cleanup"]
     assert "final_verification" in state.stages
     assert source.exists() is False
 
@@ -96,31 +97,36 @@ def test_repair_and_extract_stages_run_before_probe(tmp_path: Path) -> None:
     pipeline.process(ImportJob("i1", "r1", str(source)), _result())
 
     assert calls[:3] == ["repair", "extract", "probe"]
+    assert calls[-1] == "cleanup"
 
 
-def test_final_verification_failure_never_cleans_source(tmp_path: Path) -> None:
+def test_final_verification_failure_never_cleans_source_or_staging(tmp_path: Path) -> None:
     source = tmp_path / "source.m4b"
     source.write_bytes(b"audio")
     state = State()
-    pipeline = _pipeline(tmp_path, state, Library(), [], verify=lambda path: path == source)
+    calls: list[str] = []
+    pipeline = _pipeline(tmp_path, state, Library(), calls, verify=lambda path: path == source)
 
     with pytest.raises(ValueError):
         pipeline.process(ImportJob("i1", "r1", str(source)), _result())
 
     assert source.exists()
+    assert "cleanup" not in calls
     assert state.failed is True
 
 
-def test_library_persistence_failure_restores_preserved_source(tmp_path: Path) -> None:
+def test_library_persistence_failure_restores_preserved_source_without_cleanup(tmp_path: Path) -> None:
     source = tmp_path / "source.m4b"
     source.write_bytes(b"audio")
     destination = tmp_path / "library" / "Author" / "Book" / "Book.m4b"
+    calls: list[str] = []
 
     with pytest.raises(RuntimeError, match="library persistence failed"):
-        _pipeline(tmp_path, State(), Library(fail=True), []).process(ImportJob("i1", "r1", str(source)), _result())
+        _pipeline(tmp_path, State(), Library(fail=True), calls).process(ImportJob("i1", "r1", str(source)), _result())
 
     assert source.read_bytes() == b"audio"
     assert not destination.exists()
+    assert "cleanup" not in calls
 
 
 def test_resume_from_tagging_reuses_staged_media_without_reprocessing(tmp_path: Path) -> None:
@@ -140,4 +146,21 @@ def test_resume_from_tagging_reuses_staged_media_without_reprocessing(tmp_path: 
     ).process(job, _result())
 
     assert "remux" not in calls
-    assert calls == ["tag"]
+    assert calls == ["tag", "cleanup"]
+
+
+def test_resume_from_moving_accepts_already_verified_destination(tmp_path: Path) -> None:
+    source = tmp_path / "source.m4b"
+    destination = tmp_path / "library" / "Author" / "Book" / "Book.m4b"
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(b"audio")
+    calls: list[str] = []
+    state = State()
+    job = ImportJob("i1", "r1", str(source), stage="moving", final_path=str(destination))
+
+    book = _pipeline(tmp_path, state, Library(), calls).process(job, _result())
+
+    assert book.path == str(destination)
+    assert destination.read_bytes() == b"audio"
+    assert state.completed is True
+    assert calls == ["cleanup"]
