@@ -57,7 +57,7 @@ Providers are explicit immutable configuration objects with:
 
 Primary providers are attempted by priority. Fill servers participate when higher-priority providers cannot supply an article. Connection pools enforce per-provider limits, and the downloader enforces a separate global article/download concurrency ceiling so provider configuration cannot create unbounded tasks or memory use.
 
-Provider secrets are supplied through the existing configuration/secrets path and must not be included in logs, metrics labels, benchmark fixtures, cache keys, or persisted diagnostic text.
+PR 5 introduces provider configuration injection through application configuration/environment values. Credentials are runtime secrets, are never persisted in PostgreSQL, and must not appear in logs, metrics labels, benchmark fixtures, cache keys, or diagnostic text.
 
 ## Article-Level Fallback
 
