@@ -33,3 +33,17 @@ def test_postgres_completed_articles_are_skipped_on_resume(repository: PostgresJ
     pending = repository.pending_articles(job.id, articles)
 
     assert [article.message_id for article in pending] == ["<a2>"]
+
+
+def test_postgres_article_completion_is_idempotent(repository: PostgresJobRepository) -> None:
+    job = DownloadJob(id=f"job-{uuid4()}", release_id="release-1")
+    repository.add(job)
+    article = ArticleHeader("<a1>", "one", 100)
+    repository.ensure_articles(job.id, [article])
+    repository.mark_article_started(job.id, article.message_id, "primary")
+
+    repository.mark_article_completed(job.id, article.message_id, "primary", 100)
+    repository.mark_article_completed(job.id, article.message_id, "primary", 100)
+
+    _bytes_completed, articles_completed = repository.progress(job.id)
+    assert articles_completed == 1
