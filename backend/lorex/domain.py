@@ -55,6 +55,27 @@ class DownloadJob:
 
 
 @dataclass(frozen=True, slots=True)
+class DownloadArticleState:
+    job_id: str
+    message_id: str
+    status: str = "pending"
+    bytes_completed: int = 0
+    provider: str | None = None
+    attempts: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderHealthSnapshot:
+    provider: str
+    attempts: int = 0
+    successes: int = 0
+    failures: int = 0
+    fallbacks: int = 0
+    bytes_delivered: int = 0
+    elapsed_ms_total: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
 class DownloadResult:
     release_id: str
     title: str

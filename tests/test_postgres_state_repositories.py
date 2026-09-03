@@ -38,14 +38,16 @@ def test_library_books_survive_repository_recreation(sessions):
     assert second.all() == [book]
 
 
-def test_download_jobs_survive_recreation_and_pop_fifo(sessions):
+def test_download_jobs_survive_recreation_and_claim_fifo(sessions):
     first = PostgresJobRepository(sessions)
     first.add(DownloadJob(id="job-1", release_id="release-1"))
     first.add(DownloadJob(id="job-2", release_id="release-2"))
 
     second = PostgresJobRepository(sessions)
-    assert second.pop_next() == DownloadJob(id="job-1", release_id="release-1")
-    assert second.pop_next() == DownloadJob(id="job-2", release_id="release-2")
+    assert second.pop_next() == DownloadJob(id="job-1", release_id="release-1", status="downloading")
+    assert second.get("job-1") == DownloadJob(id="job-1", release_id="release-1", status="downloading")
+    assert second.pop_next() == DownloadJob(id="job-2", release_id="release-2", status="downloading")
+    assert second.get("job-2") == DownloadJob(id="job-2", release_id="release-2", status="downloading")
     assert second.pop_next() is None
 
 

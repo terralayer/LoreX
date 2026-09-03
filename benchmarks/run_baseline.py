@@ -12,6 +12,9 @@ from benchmarks.scenarios import SCENARIOS
 
 PRODUCT_VERSION = "0.1.1 alpha"
 POSTGRES_MILLION_SEARCH_P95_LIMIT_MS = 150.0
+QUEUE_HEAD_REMOVAL_MAX_RATIO = 0.25
+STREAMING_64MIB_PEAK_PYTHON_LIMIT_MB = 16.0
+PROGRESS_WRITE_REDUCTION_MIN = 0.90
 
 _PROFILE_CONFIGS: dict[str, list[tuple[str, int, int]]] = {
     "smoke": [
@@ -20,11 +23,16 @@ _PROFILE_CONFIGS: dict[str, list[tuple[str, int, int]]] = {
         ("release_search", 100, 2),
         ("release_search_api", 100, 2),
         ("queue_roundtrip", 20, 1),
+        ("queue_deque_roundtrip", 1_000, 1),
         ("mock_downloader", 20, 1),
         ("library_importer", 20, 1),
         ("postgres_bulk_index", 100, 1),
         ("postgres_index_lookup", 1_000, 3),
         ("postgres_release_search", 1_000, 3),
+        ("postgres_queue_claim_transition", 50, 1),
+        ("streaming_downloader_memory", 4, 1),
+        ("streaming_downloader_throughput", 4, 1),
+        ("progress_coalescing", 1_000, 1),
     ],
     "ci": [
         ("index_headers", 10_000, 2),
@@ -37,25 +45,64 @@ _PROFILE_CONFIGS: dict[str, list[tuple[str, int, int]]] = {
         ("release_search_api", 10_000, 5),
         ("release_search_api", 100_000, 3),
         ("queue_roundtrip", 10_000, 2),
+        ("queue_deque_roundtrip", 10_000, 3),
+        ("legacy_list_head_removal", 50_000, 3),
+        ("deque_head_removal", 50_000, 3),
         ("mock_downloader", 10_000, 2),
         ("library_importer", 10_000, 2),
         ("postgres_bulk_index", 10_000, 1),
         ("postgres_index_lookup", 10_000, 10),
         ("postgres_release_search", 100_000, 10),
         ("postgres_release_search", 1_000_000, 10),
+        ("postgres_queue_claim_transition", 1_000, 1),
+        ("streaming_downloader_memory", 64, 1),
+        ("streaming_downloader_throughput", 64, 2),
+        ("progress_coalescing", 10_000, 3),
     ],
 }
 
 
 def enforce_performance_gates(report: dict[str, Any]) -> None:
-    for scenario in report["scenarios"]:
-        if scenario["name"] == "postgres_release_search" and scenario["scale"] == 1_000_000:
+    scenarios = report["scenarios"]
+    scenario_map = {(scenario["name"], scenario["scale"]): scenario for scenario in scenarios}
+
+    for scenario in scenarios:
+        name = scenario["name"]
+        scale = scenario["scale"]
+        if name == "postgres_release_search" and scale == 1_000_000:
             p95_ms = scenario["timing"]["p95_ms"]
             if p95_ms >= POSTGRES_MILLION_SEARCH_P95_LIMIT_MS:
                 raise RuntimeError(
                     f"postgres_release_search p95 {p95_ms:.3f} ms must be below "
                     f"{POSTGRES_MILLION_SEARCH_P95_LIMIT_MS:.0f} ms at 1,000,000 releases"
                 )
+        if name == "streaming_downloader_memory" and scale == 64:
+            peak_python_mb = scenario["timing"]["peak_python_mb"]
+            if peak_python_mb >= STREAMING_64MIB_PEAK_PYTHON_LIMIT_MB:
+                raise RuntimeError(
+                    f"streaming_downloader_memory peak Python allocation {peak_python_mb:.3f} MiB "
+                    f"must stay below {STREAMING_64MIB_PEAK_PYTHON_LIMIT_MB:.0f} MiB for a 64 MiB payload"
+                )
+        if name == "progress_coalescing" and scale == 10_000:
+            reduction = scenario["write_reduction_ratio"]
+            if reduction < PROGRESS_WRITE_REDUCTION_MIN:
+                raise RuntimeError(
+                    f"progress_coalescing write reduction {reduction:.3%} must be at least "
+                    f"{PROGRESS_WRITE_REDUCTION_MIN:.0%}"
+                )
+
+    legacy = scenario_map.get(("legacy_list_head_removal", 50_000))
+    current = scenario_map.get(("deque_head_removal", 50_000))
+    if legacy is not None and current is not None:
+        legacy_p95 = legacy["timing"]["p95_ms"]
+        current_p95 = current["timing"]["p95_ms"]
+        allowed = legacy_p95 * QUEUE_HEAD_REMOVAL_MAX_RATIO
+        if current_p95 >= allowed:
+            raise RuntimeError(
+                f"deque_head_removal p95 {current_p95:.3f} ms must be below "
+                f"{QUEUE_HEAD_REMOVAL_MAX_RATIO:.0%} of the same-workload legacy list.pop(0) "
+                f"p95 {legacy_p95:.3f} ms (limit {allowed:.3f} ms)"
+            )
 
 
 def run_suite(profile: str) -> dict[str, Any]:
@@ -80,11 +127,14 @@ def run_suite(profile: str) -> dict[str, Any]:
         },
         "scenarios": scenarios,
         "notes": [
-            "PR 1 records measurements only; it does not enforce timing thresholds.",
             "Synthetic data is generated deterministically from fixed seeds.",
-            "Queue scale is bounded because the current baseline uses list pop(0) for FIFO removal.",
+            "The PR1 ~107 ms 10,000-job queue p95 is retained as historical context only; PR5 claim bookkeeping makes it non-comparable as an absolute gate.",
+            "Queue algorithm improvement is gated by same-scale benchmark-only list.pop(0) versus deque.popleft() head removal; the production path contains no list.pop(0).",
+            "PR5 queue claims remain durable PostgreSQL rows rather than destructive dequeues.",
+            "Streaming downloader throughput uses a zero-delay synthetic provider so provider/network latency is excluded.",
+            "Streaming memory measurements use fixed 64 KiB chunks and bounded article/provider concurrency.",
+            "Progress persistence measurements distinguish logical progress events from actual persistence writes.",
             "PostgreSQL search fixtures are seeded outside measured query latency using set-based SQL.",
-            "PR 3 PostgreSQL scenarios run against the CI PostgreSQL 16 service after Alembic migrations.",
         ],
     }
     return report
@@ -126,6 +176,11 @@ def _markdown(report: dict[str, Any]) -> str:
         )
         if scenario.get("note"):
             lines.append(f"\n> **{scenario['name']} note:** {scenario['note']}")
+        if scenario["name"] == "progress_coalescing":
+            lines.append(
+                f"> Persistence writes: `{scenario['persistence_writes']}`; "
+                f"write reduction: `{scenario['write_reduction_ratio']:.3%}`."
+            )
 
     frontend = report.get("frontend")
     if frontend is not None:

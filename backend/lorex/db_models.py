@@ -95,6 +95,42 @@ class DownloadJobRow(Base):
     release_id: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
     created_order: Mapped[int] = mapped_column(BigInteger, Identity(), nullable=False, unique=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    bytes_completed: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    articles_completed: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class DownloadArticleRow(Base):
+    __tablename__ = "download_articles"
+    __table_args__ = (
+        UniqueConstraint("job_id", "message_id", name="ux_download_articles_job_message"),
+        Index("ix_download_articles_job_status", "job_id", "status", "created_order"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("download_jobs.id", ondelete="CASCADE"), nullable=False)
+    message_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    bytes_completed: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    attempts: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    created_order: Mapped[int] = mapped_column(BigInteger, Identity(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class ProviderHealthRow(Base):
+    __tablename__ = "provider_health"
+
+    provider: Mapped[str] = mapped_column(String(128), primary_key=True)
+    attempts: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    successes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    failures: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    fallbacks: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    bytes_delivered: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    elapsed_ms_total: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
 
 
 class ImportJobRow(Base):

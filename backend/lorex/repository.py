@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 
-from lorex.domain import ArticleHeader, DownloadJob, IndexCheckpoint, IndexedRelease, LibraryBook
+from lorex.domain import (
+    ArticleHeader,
+    DownloadArticleState,
+    DownloadJob,
+    IndexCheckpoint,
+    IndexedRelease,
+    LibraryBook,
+    ProviderHealthSnapshot,
+)
 from lorex.search import DashboardSummary, ReleaseSearchPage, ReleaseSearchQuery, ReleaseSummary
 
 
@@ -122,16 +132,143 @@ class ReleaseRepository:
 
 @dataclass(slots=True)
 class JobRepository:
-    _items: list[DownloadJob] = field(default_factory=list)
+    _items: deque[DownloadJob] = field(default_factory=deque)
+    _jobs: dict[str, DownloadJob] = field(default_factory=dict)
+    _claimed_at: dict[str, datetime] = field(default_factory=dict)
+    _articles: dict[tuple[str, str], DownloadArticleState] = field(default_factory=dict)
+    _progress: dict[str, tuple[int, int]] = field(default_factory=dict)
+    _health: dict[str, ProviderHealthSnapshot] = field(default_factory=dict)
 
     def add(self, job: DownloadJob) -> DownloadJob:
-        self._items.append(job)
+        self._jobs[job.id] = job
+        if job.status == "queued":
+            self._items.append(job)
         return job
 
+    def get(self, job_id: str) -> DownloadJob | None:
+        return self._jobs.get(job_id)
+
+    def claim_next(self, worker_id: str) -> DownloadJob | None:
+        while self._items:
+            queued = self._items.popleft()
+            current = self._jobs.get(queued.id)
+            if current is None or current.status != "queued":
+                continue
+            claimed = replace(current, status="downloading")
+            self._jobs[claimed.id] = claimed
+            self._claimed_at[claimed.id] = datetime.now(UTC)
+            return claimed
+        return None
+
     def pop_next(self) -> DownloadJob | None:
-        if not self._items:
-            return None
-        return self._items.pop(0)
+        return self.claim_next("compat")
+
+    def mark_completed(self, job_id: str) -> None:
+        job = self._jobs[job_id]
+        self._jobs[job_id] = replace(job, status="completed")
+
+    def mark_failed(self, job_id: str) -> None:
+        job = self._jobs[job_id]
+        self._jobs[job_id] = replace(job, status="failed")
+
+    def recover_stale(self, stale_before: datetime) -> int:
+        recovered = 0
+        for job_id, claimed_at in list(self._claimed_at.items()):
+            job = self._jobs.get(job_id)
+            if job is None or job.status != "downloading" or claimed_at >= stale_before:
+                continue
+            queued = replace(job, status="queued")
+            self._jobs[job_id] = queued
+            self._items.append(queued)
+            self._claimed_at.pop(job_id, None)
+            recovered += 1
+        return recovered
+
+    def ensure_articles(self, job_id: str, articles: Iterable[ArticleHeader]) -> int:
+        inserted = 0
+        for article in articles:
+            key = (job_id, article.message_id)
+            if key not in self._articles:
+                self._articles[key] = DownloadArticleState(job_id=job_id, message_id=article.message_id)
+                inserted += 1
+        return inserted
+
+    def pending_articles(self, job_id: str, articles: Iterable[ArticleHeader]) -> tuple[ArticleHeader, ...]:
+        materialized = tuple(articles)
+        self.ensure_articles(job_id, materialized)
+        return tuple(
+            article
+            for article in materialized
+            if self._articles[(job_id, article.message_id)].status != "completed"
+        )
+
+    def mark_article_started(self, job_id: str, message_id: str, provider: str) -> None:
+        key = (job_id, message_id)
+        state = self._articles.get(key, DownloadArticleState(job_id=job_id, message_id=message_id))
+        self._articles[key] = replace(
+            state,
+            status="in_progress",
+            provider=provider,
+            attempts=state.attempts + 1,
+        )
+
+    def mark_article_completed(
+        self,
+        job_id: str,
+        message_id: str,
+        provider: str,
+        bytes_completed: int,
+    ) -> None:
+        key = (job_id, message_id)
+        state = self._articles.get(key, DownloadArticleState(job_id=job_id, message_id=message_id))
+        self._articles[key] = replace(
+            state,
+            status="completed",
+            provider=provider,
+            bytes_completed=bytes_completed,
+        )
+
+    def mark_article_failed(self, job_id: str, message_id: str, provider: str) -> None:
+        key = (job_id, message_id)
+        state = self._articles.get(key, DownloadArticleState(job_id=job_id, message_id=message_id))
+        self._articles[key] = replace(state, status="failed", provider=provider)
+
+    def persist_job_progress(self, job_id: str, *, bytes_delta: int, articles_delta: int = 0) -> None:
+        bytes_completed, articles_completed = self._progress.get(job_id, (0, 0))
+        self._progress[job_id] = (
+            bytes_completed + bytes_delta,
+            articles_completed + articles_delta,
+        )
+
+    def persist_progress(self, byte_count: int) -> None:
+        # Compatibility sink for standalone ProgressCoalescer/streaming tests.
+        return None
+
+    def progress(self, job_id: str) -> tuple[int, int]:
+        return self._progress.get(job_id, (0, 0))
+
+    def record_provider_attempt(
+        self,
+        provider: str,
+        *,
+        success: bool,
+        fallback: bool,
+        byte_count: int,
+        elapsed_ms: float,
+    ) -> None:
+        snapshot = self._health.get(provider, ProviderHealthSnapshot(provider=provider))
+        self._health[provider] = ProviderHealthSnapshot(
+            provider=provider,
+            attempts=snapshot.attempts + 1,
+            successes=snapshot.successes + int(success),
+            failures=snapshot.failures + int(not success),
+            fallbacks=snapshot.fallbacks + int(fallback),
+            bytes_delivered=snapshot.bytes_delivered + byte_count,
+            elapsed_ms_total=snapshot.elapsed_ms_total + elapsed_ms,
+        )
+
+    def provider_health(self, provider: str) -> ProviderHealthSnapshot:
+        return self._health.get(provider, ProviderHealthSnapshot(provider=provider))
 
 
 @dataclass(slots=True)
