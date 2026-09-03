@@ -61,6 +61,8 @@ class ImportJob:
     source_path: str
     status: str = "queued"
     stage: str = "verify"
+    staging_path: str | None = None
+    final_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
