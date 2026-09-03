@@ -287,6 +287,28 @@ def _seed_postgres_search_releases(engine: Any, scale: int) -> None:
         connection.execute(text("ANALYZE releases"))
 
 
+def _postgres_search_plan(engine: Any, needle: str) -> str:
+    pattern = f"%{needle}%"
+    predicate = """
+        normalized_title ILIKE :pattern OR normalized_author ILIKE :pattern
+        OR narrator ILIKE :pattern OR source_subject ILIKE :pattern
+    """
+    statements = (
+        f"EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM releases WHERE {predicate}",
+        f"""EXPLAIN (ANALYZE, BUFFERS)
+            SELECT id, title, author, narrator, format, size, completion,
+                   download_status, import_status, posted_at
+            FROM releases WHERE {predicate}
+            ORDER BY posted_at DESC, id DESC LIMIT 50 OFFSET 0""",
+    )
+    with engine.connect() as connection:
+        plans = [
+            "\n".join(connection.execute(text(statement), {"pattern": pattern}).scalars())
+            for statement in statements
+        ]
+    return "\n--- page query ---\n".join(plans)
+
+
 def benchmark_postgres_release_search(scale: int, samples: int) -> dict[str, Any]:
     engine, repository = _postgres_repository()
     _truncate_postgres_releases(engine)
@@ -298,6 +320,7 @@ def benchmark_postgres_release_search(scale: int, samples: int) -> dict[str, Any
             return repository.search_page(query).total
 
         timing = measure_samples("postgres_release_search", operation, samples=samples, warmups=1)
+        plan = _postgres_search_plan(engine, query.q) if scale == 1_000_000 else None
     finally:
         engine.dispose()
 
@@ -307,7 +330,10 @@ def benchmark_postgres_release_search(scale: int, samples: int) -> dict[str, Any
         "releases",
         1,
         timing,
-        note="Set-based PostgreSQL fixture seed and ANALYZE are excluded; measures a unique near-tail trigram search.",
+        note=(
+            "Set-based PostgreSQL fixture seed and ANALYZE are excluded; measures a unique near-tail trigram search."
+            + (f"\n\nQuery plan:\n{plan}" if plan else "")
+        ),
     )
 
 

@@ -87,8 +87,6 @@ def run_suite(profile: str) -> dict[str, Any]:
             "PR 3 PostgreSQL scenarios run against the CI PostgreSQL 16 service after Alembic migrations.",
         ],
     }
-    if profile == "ci":
-        enforce_performance_gates(report)
     return report
 
 
@@ -171,6 +169,8 @@ def main() -> int:
     json_path, markdown_path = write_report(report, args.output)
     print(markdown_path.read_text(encoding="utf-8"))
     print(f"JSON report: {json_path}")
+    if args.profile == "ci":
+        enforce_performance_gates(report)
     return 0
 
 
