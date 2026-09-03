@@ -36,6 +36,18 @@ def test_index_search_nzb_and_grab(client, mock_headers):
     assert grabbed.json()["release_id"] == release["id"]
 
 
+def test_process_next_persists_completed_job_state(client, mock_headers):
+    client.post("/api/index/mock", json={"headers": mock_headers})
+    release = client.get("/api/releases/search", params={"q": "Project Hail Mary"}).json()["results"][0]
+    grabbed = client.post(f"/api/releases/{release['id']}/grab").json()
+
+    processed = client.post("/api/downloads/process-next")
+
+    assert processed.status_code == 200
+    assert processed.json()["status"] == "completed"
+    assert client.app.state.container.jobs.get(grabbed["id"]).status == "completed"
+
+
 def test_release_search_is_bounded_and_paginated(client, mock_headers):
     client.post("/api/index/mock", json={"headers": mock_headers})
 
