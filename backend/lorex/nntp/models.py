@@ -41,6 +41,21 @@ class NntpProvider:
     groups: tuple[NntpProviderGroup, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class NntpProviderSummary:
+    id: str
+    name: str
+    host: str
+    port: int = 563
+    enabled: bool = True
+    priority: int = 100
+    fill_server: bool = False
+    max_connections: int = 4
+    username_configured: bool = False
+    password_configured: bool = False
+    groups: tuple[NntpProviderGroup, ...] = ()
+
+
 class _SecretAction(str, Enum):
     KEEP = "keep"
     CLEAR = "clear"
