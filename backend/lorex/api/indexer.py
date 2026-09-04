@@ -37,6 +37,9 @@ class IndexerGroupStatus(BaseModel):
 
 
 class IndexerStatusResponse(IndexerSettingsResponse):
+    worker_online: bool
+    worker_last_heartbeat_at: datetime | None
+    worker_error: str | None
     groups: list[IndexerGroupStatus]
 
 
@@ -59,10 +62,23 @@ def _providers(request: Request):
     return providers
 
 
+def _worker_status(runtime, request: Request) -> tuple[bool, datetime | None, str | None]:
+    heartbeat = runtime.scanner_worker_heartbeat()
+    online = runtime.scanner_worker_online()
+    if online:
+        return True, heartbeat, None
+    if not getattr(request.app.state.container, "credential_key_available", False):
+        return False, heartbeat, "LOREX_CREDENTIAL_KEY is not configured; the scanner worker cannot start."
+    if heartbeat is None:
+        return False, None, "Scanner worker has not reported a heartbeat."
+    return False, heartbeat, "Scanner worker heartbeat is stale."
+
+
 @router.get("/status", response_model=IndexerStatusResponse)
 def indexer_status(request: Request) -> IndexerStatusResponse:
     runtime = _runtime(request)
     settings = runtime.scanner_settings()
+    worker_online, worker_heartbeat, worker_error = _worker_status(runtime, request)
     state_by_key = {(item.provider_id, item.group_name.casefold()): item for item in runtime.scanner_states()}
 
     groups: list[IndexerGroupStatus] = []
@@ -93,6 +109,9 @@ def indexer_status(request: Request) -> IndexerStatusResponse:
         enabled=settings.enabled,
         scan_interval_seconds=settings.scan_interval_seconds,
         scan_request_token=settings.scan_request_token,
+        worker_online=worker_online,
+        worker_last_heartbeat_at=worker_heartbeat,
+        worker_error=worker_error,
         groups=groups,
     )
 
@@ -119,5 +138,10 @@ def update_indexer_settings(payload: IndexerSettingsPatch, request: Request) -> 
 
 @router.post("/scan-now", status_code=status.HTTP_202_ACCEPTED, response_model=ScanNowResponse)
 def request_scan_now(request: Request) -> ScanNowResponse:
-    token = _runtime(request).request_scan_now()
+    runtime = _runtime(request)
+    worker_online, _, worker_error = _worker_status(runtime, request)
+    if not worker_online:
+        detail = worker_error or "Scanner worker is offline."
+        raise HTTPException(status_code=503, detail=f"Scanner worker is offline. {detail}")
+    token = runtime.request_scan_now()
     return ScanNowResponse(status="requested", scan_request_token=token)
