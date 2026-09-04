@@ -99,6 +99,9 @@ class DownloadJobRow(Base):
     claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     bytes_completed: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     articles_completed: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
 
 
@@ -189,3 +192,42 @@ class NntpProviderGroupRow(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     scan_batch_size: Mapped[int] = mapped_column(Integer, nullable=False, default=5000)
     backfill_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class ScannerGroupStateRow(Base):
+    __tablename__ = "scanner_group_state"
+    __table_args__ = (Index("ix_scanner_group_state_status", "status", "updated_at"),)
+
+    provider_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("nntp_providers.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    group_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="idle")
+    last_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_scanned_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    last_indexed_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class RuntimeSettingRow(Base):
+    __tablename__ = "runtime_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class ActivityEventRow(Base):
+    __tablename__ = "activity_events"
+    __table_args__ = (Index("ix_activity_events_created_at", "created_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    entity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
