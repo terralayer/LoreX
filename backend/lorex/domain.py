@@ -115,6 +115,7 @@ class DownloadResult:
     size: int
     staging_dir: str | None = None
     article_paths: tuple[str, ...] = ()
+    article_subjects: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
