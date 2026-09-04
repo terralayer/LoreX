@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy import Engine
 
+from lorex.api.indexer import router as indexer_router
 from lorex.api.library import router as library_router
 from lorex.api.nntp_settings import router as nntp_settings_router
 from lorex.api.releases import router as releases_router
@@ -23,6 +24,7 @@ from lorex.read_repository import (
     ResponsivePostgresReleaseRepository,
 )
 from lorex.repository import JobRepository, LibraryRepository, ReleaseRepository
+from lorex.runtime_repository import PostgresRuntimeRepository
 from lorex.security.credentials import credential_cipher_from_env
 
 
@@ -39,6 +41,7 @@ class AppContainer:
     importer: LibraryImporter
     engine: Engine | None = None
     nntp_providers: PostgresNntpProviderRepository | None = None
+    runtime: PostgresRuntimeRepository | None = None
     credential_key_available: bool = False
     mock_api_enabled: bool = False
     mock_downloader: MockDownloader = field(default_factory=MockDownloader)
@@ -63,6 +66,7 @@ class AppContainer:
                 importer=LibraryImporter(library),
                 engine=engine,
                 nntp_providers=PostgresNntpProviderRepository(sessions, cipher),
+                runtime=PostgresRuntimeRepository(sessions),
                 credential_key_available=cipher is not None,
                 mock_api_enabled=mock_api_enabled,
             )
@@ -104,6 +108,7 @@ def create_app() -> FastAPI:
     application.include_router(releases_router)
     application.include_router(library_router)
     application.include_router(nntp_settings_router)
+    application.include_router(indexer_router)
 
     frontend_dist = Path("frontend-dist")
     frontend_index = frontend_dist / "index.html"
