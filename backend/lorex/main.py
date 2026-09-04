@@ -49,6 +49,8 @@ class AppContainer:
     runtime: PostgresRuntimeRepository | None = None
     credential_key_available: bool = False
     mock_api_enabled: bool = False
+    nntp_client_factory: Any | None = None
+    download_root: str = "/downloads"
     mock_downloader: MockDownloader = field(default_factory=MockDownloader)
     mock_release_ids: set[str] = field(default_factory=set)
 
