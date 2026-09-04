@@ -16,6 +16,7 @@ from lorex.nntp.models import NntpProviderGroup
 from lorex.nntp.repository import PostgresNntpProviderRepository
 from lorex.nntp.scanner import scan_group_once
 from lorex.postgres_repository import PostgresJobRepository, PostgresLibraryRepository, PostgresReleaseRepository
+from lorex.postprocess import PostProcessor
 from lorex.security.credentials import CredentialCipher
 from tests.support.fake_nntp import FakeNntpServer
 
@@ -136,14 +137,19 @@ def test_fake_tls_scan_primary_fill_download_and_library_import(tmp_path: Path):
             client_factory=client_factory,
         )
         result = downloader.download_job(job, release, articles)
-        book = LibraryImporter(library, root=str(tmp_path / "library")).import_download(result)
+        processed = PostProcessor().process(result)
+        book = LibraryImporter(library, root=str(tmp_path / "library")).import_file(result, processed.path)
 
         completed = sorted((tmp_path / "downloads" / job.id).glob("*.complete"))
         assert len(completed) == 2
         assert {item.read_bytes() for item in completed} == {part1, part2}
+        final_file = Path(book.path)
+        assert final_file.is_file()
+        assert final_file.read_bytes() == part1 + part2
         assert book.title == "Project Hail Mary"
         assert book.author == "Andy Weir"
         assert book.narrator == "Ray Porter"
+        assert book.size == len(part1 + part2)
         assert library.all()[0].id == book.id
         assert any(command == "BODY <102@lorex.test>" for command in primary_server.commands)
         assert any(command == "BODY <102@lorex.test>" for command in fill_server.commands)
