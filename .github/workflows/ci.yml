@@ -83,7 +83,7 @@ jobs:
         run: docker build -t lorex-ci .
       - name: Verify packaged post-processing tools
         run: |
-          docker run --rm lorex-ci sh -lc 'command -v par2 && command -v 7z && command -v unar && command -v ffmpeg'
+          docker run --rm --entrypoint sh lorex-ci -lc 'command -v par2 && command -v 7z && command -v unar && command -v ffmpeg'
 
   benchmark:
     runs-on: ubuntu-latest
