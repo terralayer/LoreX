@@ -15,6 +15,9 @@ from lorex.security.credentials import credential_cipher_from_env
 from lorex.services.nntp_scanning import scan_provider_group_once
 
 
+SCANNER_WORKER_NAME = "nntp-scanner"
+
+
 def _safe_error(provider, exc: Exception) -> str:
     message = f"{type(exc).__name__}: {exc}"
     for secret in (getattr(provider, "username", None), getattr(provider, "password", None)):
@@ -88,6 +91,7 @@ def run_forever(
     last_request_token = runtime_repository.scanner_settings().scan_request_token
 
     while not stop.is_set():
+        runtime_repository.touch_worker_heartbeat(SCANNER_WORKER_NAME)
         settings = runtime_repository.scanner_settings()
         now = monotonic()
         due = last_scan_at is None or now - last_scan_at >= settings.scan_interval_seconds
