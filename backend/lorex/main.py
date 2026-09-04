@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import FastAPI
@@ -33,6 +33,8 @@ class AppContainer:
     engine: Engine | None = None
     nntp_providers: PostgresNntpProviderRepository | None = None
     credential_key_available: bool = False
+    mock_downloader: MockDownloader = field(default_factory=MockDownloader)
+    mock_release_ids: set[str] = field(default_factory=set)
 
     @classmethod
     def build(cls, database_url: str | None = None) -> "AppContainer":
@@ -56,11 +58,13 @@ class AppContainer:
             )
 
         library = LibraryRepository()
+        mock_downloader = MockDownloader()
         return cls(
             releases=ReleaseRepository(),
             jobs=JobRepository(),
             library=library,
-            downloader=MockDownloader(),
+            downloader=mock_downloader,
+            mock_downloader=mock_downloader,
             importer=LibraryImporter(library),
         )
 
