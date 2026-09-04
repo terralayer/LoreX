@@ -1,14 +1,21 @@
 import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from 'react'
 
 const HomePage = lazy(() => import('./routes/HomePage'))
-const LibraryPage = lazy(() => import('./routes/LibraryPage'))
 const SearchPage = lazy(() => import('./routes/SearchPage'))
+const DownloadsPage = lazy(() => import('./routes/DownloadsPage'))
+const LibraryPage = lazy(() => import('./routes/LibraryPage'))
+const IndexerPage = lazy(() => import('./routes/IndexerPage'))
+const ActivityPage = lazy(() => import('./routes/ActivityPage'))
 const SettingsPage = lazy(() => import('./routes/SettingsPage'))
 
 const nav = [
-  { label: 'Home', route: '/' },
-  { label: 'Library', route: '/library' },
-  { label: 'Settings', route: '/settings' },
+  { label: 'Home', route: '/', icon: '⌂' },
+  { label: 'Search', route: '/search', icon: '⌕' },
+  { label: 'Downloads', route: '/downloads', icon: '↓' },
+  { label: 'Library', route: '/library', icon: '▣' },
+  { label: 'Indexer', route: '/indexer', icon: '⌁' },
+  { label: 'Activity', route: '/activity', icon: '◷' },
+  { label: 'Settings', route: '/settings', icon: '⚙' },
 ]
 
 type Route = { path: string; query: URLSearchParams }
@@ -42,10 +49,13 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  const activeRoute = route.path === '/search' ? '/search' : route.path
+  const activeRoute = route.path
   const content = useMemo(() => {
-    if (route.path === '/library') return <LibraryPage />
     if (route.path === '/search') return <SearchPage initialQuery={route.query.get('q') ?? ''} />
+    if (route.path === '/downloads') return <DownloadsPage />
+    if (route.path === '/library') return <LibraryPage />
+    if (route.path === '/indexer') return <IndexerPage />
+    if (route.path === '/activity') return <ActivityPage />
     if (route.path === '/settings') return <SettingsPage />
     return <HomePage />
   }, [route])
@@ -62,13 +72,9 @@ export default function App() {
       <aside className="sidebar">
         <Logo />
         <nav>
-          {nav.map((item, index) => (
-            <button
-              key={item.label}
-              className={activeRoute === item.route ? 'active' : ''}
-              onClick={() => { window.location.hash = item.route }}
-            >
-              <span className="nav-dot">{index === 0 ? '⌂' : '·'}</span>{item.label}
+          {nav.map((item) => (
+            <button key={item.label} className={activeRoute === item.route ? 'active' : ''} onClick={() => { window.location.hash = item.route }}>
+              <span className="nav-dot">{item.icon}</span>{item.label}
             </button>
           ))}
         </nav>
@@ -87,7 +93,7 @@ export default function App() {
             <input value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} placeholder="Search indexed audiobooks…" aria-label="Global search" />
             <button aria-label="Search">⌕</button>
           </form>
-          <div className="header-right"><span>LoreX</span></div>
+          <div className="header-right"><span>0.1.1 alpha</span></div>
         </header>
         <Suspense fallback={<div className="route-loading">Loading view…</div>}>{content}</Suspense>
       </main>
