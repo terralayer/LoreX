@@ -20,6 +20,9 @@ _QUOTED_FILENAME = re.compile(
     r"[\"'](?P<name>[^\"'<>/\\]+\.(?:m4b|m4a|mp3|aac|flac|par2|rar|r\d{2}|7z|zip))[\"']",
     re.IGNORECASE,
 )
+_ANY_FILENAME = re.compile(
+    r"(?:[\"'](?P<quoted>[^\"'<>/\\]+\.[A-Za-z0-9]{1,12})[\"']|(?P<plain>[^\s\"'<>/\\]+\.[A-Za-z0-9]{1,12}))"
+)
 
 
 class PostProcessError(RuntimeError):
@@ -42,6 +45,10 @@ def _filename_from_subject(subject: str) -> str | None:
     if match is None:
         return None
     return _safe_name(match.group("name").strip())
+
+
+def _subject_has_explicit_filename(subject: str) -> bool:
+    return _ANY_FILENAME.search(subject) is not None
 
 
 def _magic_extension(path: Path) -> str | None:
@@ -129,7 +136,8 @@ class PostProcessor:
                 grouped.setdefault(name, []).append(path)
 
         # No usable filenames usually means a direct multipart payload. Preserve
-        # release article order and assemble it using the indexed audio format.
+        # release article order and assemble it using the indexed audio format only
+        # when the subjects do not explicitly name some unsupported file type.
         if unnamed:
             if grouped:
                 for index, path in enumerate(unnamed, 1):
@@ -137,10 +145,16 @@ class PostProcessor:
                     grouped[f"unnamed-{index:04d}{extension}"] = [path]
             else:
                 detected = _magic_extension(unnamed[0])
-                extension = detected or f".{result.format.lower()}"
-                fallback = _safe_name(result.file_name)
-                if Path(fallback).suffix.lower() not in _AUDIO_EXTENSIONS | _ARCHIVE_EXTENSIONS | {".par2"}:
-                    fallback = f"payload{extension}"
+                explicit_unsupported_name = detected is None and any(
+                    _subject_has_explicit_filename(subject) for subject in subjects
+                )
+                if explicit_unsupported_name:
+                    fallback = "payload.bin"
+                else:
+                    extension = detected or f".{result.format.lower()}"
+                    fallback = _safe_name(result.file_name)
+                    if Path(fallback).suffix.lower() not in _AUDIO_EXTENSIONS | _ARCHIVE_EXTENSIONS | {".par2"}:
+                        fallback = f"payload{extension}"
                 grouped[fallback] = unnamed
 
         reconstructed_paths: list[Path] = []
