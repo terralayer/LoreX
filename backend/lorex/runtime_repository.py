@@ -44,6 +44,7 @@ class PostgresRuntimeRepository:
     DEFAULT_SCAN_INTERVAL_SECONDS = 300
     MIN_SCAN_INTERVAL_SECONDS = 10
     MAX_SCAN_INTERVAL_SECONDS = 86_400
+    DEFAULT_WORKER_HEARTBEAT_MAX_AGE_SECONDS = 5.0
 
     def __init__(self, sessions: sessionmaker[Session]) -> None:
         self._sessions = sessions
@@ -93,6 +94,46 @@ class PostgresRuntimeRepository:
                 row.updated_at = now
             session.flush()
             return token
+
+    def touch_worker_heartbeat(self, worker_name: str) -> datetime:
+        now = datetime.now(UTC)
+        key = self._worker_heartbeat_key(worker_name)
+        with self._sessions.begin() as session:
+            statement = pg_insert(RuntimeSettingRow).values(key=key, value="alive", updated_at=now)
+            statement = statement.on_conflict_do_update(
+                index_elements=[RuntimeSettingRow.key],
+                set_={"value": "alive", "updated_at": now},
+            )
+            session.execute(statement)
+        return now
+
+    def worker_heartbeat(self, worker_name: str) -> datetime | None:
+        key = self._worker_heartbeat_key(worker_name)
+        with self._sessions() as session:
+            row = session.get(RuntimeSettingRow, key)
+            if row is None:
+                return None
+            heartbeat = row.updated_at
+        if heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=UTC)
+        return heartbeat
+
+    def worker_is_online(
+        self,
+        worker_name: str,
+        *,
+        max_age_seconds: float | None = None,
+    ) -> bool:
+        heartbeat = self.worker_heartbeat(worker_name)
+        if heartbeat is None:
+            return False
+        max_age = (
+            self.DEFAULT_WORKER_HEARTBEAT_MAX_AGE_SECONDS
+            if max_age_seconds is None
+            else max(0.1, float(max_age_seconds))
+        )
+        age_seconds = (datetime.now(UTC) - heartbeat).total_seconds()
+        return -max_age <= age_seconds <= max_age
 
     def mark_scan_started(self, provider_id: str, group_name: str) -> None:
         now = datetime.now(UTC)
@@ -240,6 +281,13 @@ class PostgresRuntimeRepository:
                 )
                 for row in rows
             )
+
+    @staticmethod
+    def _worker_heartbeat_key(worker_name: str) -> str:
+        normalized = worker_name.strip().lower()
+        if not normalized or len(normalized) > 64:
+            raise ValueError("worker_name must be between 1 and 64 characters")
+        return f"worker_heartbeat:{normalized}"
 
     @staticmethod
     def _upsert_setting(session: Session, key: str, value: str) -> None:
