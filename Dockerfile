@@ -13,6 +13,8 @@ COPY migrations/ ./migrations/
 COPY backend/ ./backend/
 RUN pip install --no-cache-dir .
 COPY --from=frontend-build /src/frontend/dist ./frontend-dist
-RUN mkdir -p /config /downloads /library
+COPY docker-entrypoint.sh /usr/local/bin/lorex-entrypoint
+RUN chmod +x /usr/local/bin/lorex-entrypoint && mkdir -p /config /downloads /library
 EXPOSE 8000
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn lorex.main:app --host 0.0.0.0 --port 8000"]
+ENTRYPOINT ["/usr/local/bin/lorex-entrypoint"]
+CMD ["uvicorn", "lorex.main:app", "--host", "0.0.0.0", "--port", "8000"]
