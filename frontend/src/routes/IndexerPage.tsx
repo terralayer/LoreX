@@ -23,6 +23,9 @@ type IndexerStatus = {
   enabled: boolean
   scan_interval_seconds: number
   scan_request_token: number
+  worker_online: boolean
+  worker_last_heartbeat_at: string | null
+  worker_error: string | null
   groups: GroupStatus[]
 }
 
@@ -68,7 +71,7 @@ export default function IndexerPage() {
     setBusy(true); setMessage(null); setActionError(null)
     try {
       await apiMutation('/api/indexer/scan-now', 'POST')
-      setMessage('Scan requested. The scanner worker will pick it up immediately.')
+      setMessage('Scan requested. Scanner worker is online and will start the pass immediately.')
       await reload()
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : 'Could not request scan')
@@ -77,13 +80,18 @@ export default function IndexerPage() {
 
   return (
     <section className="content route-page">
-      <div className="page-heading"><div><small>Continuous NNTP scanner</small><h1>Indexer</h1><p>Durable scanner settings, checkpoints, and provider/group results.</p></div><button disabled={busy || !data?.enabled} onClick={() => void scanNow()}>Scan now</button></div>
+      <div className="page-heading"><div><small>Continuous NNTP scanner</small><h1>Indexer</h1><p>Durable scanner settings, checkpoints, and provider/group results.</p></div><button disabled={busy || !data?.enabled || !data?.worker_online} onClick={() => void scanNow()}>Scan now</button></div>
       {error && <div className="inline-error">Could not load indexer status: {error}</div>}
       {actionError && <div className="inline-error">{actionError}</div>}
       {message && <div className="inline-success">{message}</div>}
 
       <section className="panel settings-panel">
-        <div className="panel-title"><h3>Scanner</h3><span>{data?.enabled ? 'Enabled' : 'Disabled'}</span></div>
+        <div className="panel-title"><h3>Scanner</h3><span>{data?.worker_online ? 'Worker online' : 'Worker offline'}</span></div>
+        {data && (data.worker_online ? (
+          <div className="inline-success">Scanner worker online · last heartbeat {formatTime(data.worker_last_heartbeat_at)}</div>
+        ) : (
+          <div className="inline-error">Scanner worker offline{data.worker_error ? ` · ${data.worker_error}` : ''}</div>
+        ))}
         <form className="inline-settings" onSubmit={save}>
           <label><span>Enabled</span><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /></label>
           <label><span>Interval (seconds)</span><input type="number" min="10" max="86400" value={interval} onChange={(event) => setIntervalValue(event.target.value)} /></label>
