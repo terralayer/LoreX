@@ -33,7 +33,6 @@ def _safe_error(container, exc: Exception) -> str:
                     if secret:
                         message = message.replace(secret, "***")
         except Exception:
-            # Error sanitization must never cause a second failure.
             pass
     return message[:4096]
 
@@ -64,6 +63,13 @@ def _mark_canceled(jobs, job_id: str) -> None:
         _mark_failed(jobs, job_id, "Canceled")
 
 
+def _is_explicit_mock_release(container, release_id: str) -> bool:
+    return bool(
+        getattr(container, "mock_api_enabled", False)
+        and release_id in getattr(container, "mock_release_ids", set())
+    )
+
+
 def queue_release(container, release_id: str) -> DownloadJob:
     release = container.releases.get(release_id)
     if release is None:
@@ -87,7 +93,7 @@ def queue_release(container, release_id: str) -> DownloadJob:
 
 
 def _download_release(container, job: DownloadJob, release):
-    if release.id in getattr(container, "mock_release_ids", set()) and getattr(container, "mock_api_enabled", False):
+    if _is_explicit_mock_release(container, release.id):
         return container.mock_downloader.download(release)
 
     if getattr(container, "downloader", None) is not None:
@@ -135,14 +141,19 @@ def process_next_download(container, *, worker_id: str) -> DownloadProcessResult
             return DownloadProcessResult(job.id, job.release_id, "canceled")
 
         _set_status(container.jobs, job.id, "postprocessing")
-        postprocessor = getattr(container, "postprocessor", None)
-        if postprocessor is not None:
+        if _is_explicit_mock_release(container, release.id):
+            # Synthetic test/demo releases intentionally do not create physical
+            # Usenet staging files. This compatibility path is impossible unless
+            # the mock API was explicitly enabled.
+            _set_status(container.jobs, job.id, "importing")
+            book = container.importer.import_download(result)
+        else:
+            postprocessor = getattr(container, "postprocessor", None)
+            if postprocessor is None:
+                raise RuntimeError("Physical post-processing is unavailable")
             processed = postprocessor.process(result)
             _set_status(container.jobs, job.id, "importing")
             book = container.importer.import_file(result, processed.path)
-        else:
-            _set_status(container.jobs, job.id, "importing")
-            book = container.importer.import_download(result)
 
         container.jobs.mark_completed(job.id)
         _append_activity(
