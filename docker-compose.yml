@@ -19,7 +19,7 @@ services:
 
   nntp-scanner:
     build: .
-    command: ["python", "-m", "lorex.workers.nntp_scanner", "--once", "--mode", "live"]
+    command: ["python", "-m", "lorex.workers.nntp_scanner", "--mode", "live"]
     environment:
       LOREX_DATABASE_URL: postgresql://lorex:lorex@postgres:5432/lorex
       LOREX_REDIS_URL: redis://redis:6379/0
@@ -29,7 +29,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    restart: "no"
+    restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
