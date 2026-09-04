@@ -12,8 +12,11 @@ from lorex.api.releases import router as releases_router
 from lorex.db import create_engine_from_url, database_url_from_env, session_factory
 from lorex.downloader.mock import MockDownloader
 from lorex.library.importer import LibraryImporter
-from lorex.postgres_repository import PostgresReleaseRepository
-from lorex.read_repository import ResponsivePostgresJobRepository, ResponsivePostgresLibraryRepository
+from lorex.read_repository import (
+    ResponsivePostgresJobRepository,
+    ResponsivePostgresLibraryRepository,
+    ResponsivePostgresReleaseRepository,
+)
 from lorex.repository import JobRepository, LibraryRepository, ReleaseRepository
 
 
@@ -33,7 +36,7 @@ class AppContainer:
             sessions = session_factory(engine)
             library = ResponsivePostgresLibraryRepository(sessions)
             return cls(
-                releases=PostgresReleaseRepository(sessions),
+                releases=ResponsivePostgresReleaseRepository(sessions),
                 jobs=ResponsivePostgresJobRepository(sessions),
                 library=library,
                 downloader=MockDownloader(),
