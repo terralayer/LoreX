@@ -45,6 +45,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Generate test credential key
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          from base64 import urlsafe_b64encode
+          print("LOREX_CREDENTIAL_KEY=" + urlsafe_b64encode(b"L" * 32).decode().rstrip("="))
+          PY
       - name: Install backend
         run: pip install -e ".[dev]"
       - name: Run migrations
@@ -105,6 +112,13 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: frontend/package.json
+      - name: Generate test credential key
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          from base64 import urlsafe_b64encode
+          print("LOREX_CREDENTIAL_KEY=" + urlsafe_b64encode(b"L" * 32).decode().rstrip("="))
+          PY
       - name: Install backend
         run: pip install -e ".[dev]"
       - name: Run migrations
@@ -122,22 +136,17 @@ jobs:
           python -m benchmarks.run_pr6 --output benchmark-results 2>&1 | tee benchmark-results/pr6-runner.log
           python -m benchmarks.run_pr7 --output benchmark-results 2>&1 | tee benchmark-results/pr7-runner.log
           python -m benchmarks.run_pr8 --output benchmark-results --frontend-dist frontend/dist 2>&1 | tee benchmark-results/pr8-runner.log
+          python -m benchmarks.run_live_nntp --output benchmark-results 2>&1 | tee benchmark-results/live-nntp-runner.log
       - name: Publish benchmark summary
         if: always() && hashFiles('benchmark-results/baseline.md') != ''
         run: |
           cat benchmark-results/baseline.md >> "$GITHUB_STEP_SUMMARY"
-          if [ -f benchmark-results/pr6-importer.md ]; then
-            printf '\n' >> "$GITHUB_STEP_SUMMARY"
-            cat benchmark-results/pr6-importer.md >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f benchmark-results/pr7-metadata.md ]; then
-            printf '\n' >> "$GITHUB_STEP_SUMMARY"
-            cat benchmark-results/pr7-metadata.md >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f benchmark-results/pr8-ui-api.md ]; then
-            printf '\n' >> "$GITHUB_STEP_SUMMARY"
-            cat benchmark-results/pr8-ui-api.md >> "$GITHUB_STEP_SUMMARY"
-          fi
+          for report in pr6-importer.md pr7-metadata.md pr8-ui-api.md live-nntp.md; do
+            if [ -f "benchmark-results/$report" ]; then
+              printf '\n' >> "$GITHUB_STEP_SUMMARY"
+              cat "benchmark-results/$report" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
       - name: Upload benchmark artifact
         if: always() && hashFiles('benchmark-results/**') != ''
         uses: actions/upload-artifact@v4
