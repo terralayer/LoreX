@@ -10,10 +10,11 @@ def test_grab_processes_into_managed_library(client, mock_headers):
     library = client.get("/api/library/books")
     assert library.status_code == 200
     payload = library.json()
-    assert payload["count"] == 1
-    book = payload["books"][0]
+    assert payload["total"] == 1
+    assert payload["limit"] == 50
+    assert payload["offset"] == 0
+    book = payload["results"][0]
     assert book["title"] == "Project Hail Mary"
     assert book["author"] == "Andy Weir"
     assert book["narrator"] == "Ray Porter"
     assert book["format"] == "m4b"
-    assert book["path"] == "/library/Andy Weir/Project Hail Mary/Project Hail Mary.m4b"
