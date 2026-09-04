@@ -1,23 +1,26 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import FastAPI
 from sqlalchemy import Engine
 
 from lorex.api.library import router as library_router
+from lorex.api.nntp_settings import router as nntp_settings_router
 from lorex.api.releases import router as releases_router
 from lorex.db import create_engine_from_url, database_url_from_env, session_factory
 from lorex.downloader.mock import MockDownloader
 from lorex.library.importer import LibraryImporter
+from lorex.nntp.repository import PostgresNntpProviderRepository
 from lorex.read_repository import (
     ResponsivePostgresJobRepository,
     ResponsivePostgresLibraryRepository,
     ResponsivePostgresReleaseRepository,
 )
 from lorex.repository import JobRepository, LibraryRepository, ReleaseRepository
+from lorex.security.credentials import credential_cipher_from_env
 
 
 @dataclass(slots=True)
@@ -25,9 +28,13 @@ class AppContainer:
     releases: Any
     jobs: Any
     library: Any
-    downloader: MockDownloader
+    downloader: Any
     importer: LibraryImporter
     engine: Engine | None = None
+    nntp_providers: PostgresNntpProviderRepository | None = None
+    credential_key_available: bool = False
+    mock_downloader: MockDownloader = field(default_factory=MockDownloader)
+    mock_release_ids: set[str] = field(default_factory=set)
 
     @classmethod
     def build(cls, database_url: str | None = None) -> "AppContainer":
@@ -35,21 +42,29 @@ class AppContainer:
             engine = create_engine_from_url(database_url)
             sessions = session_factory(engine)
             library = ResponsivePostgresLibraryRepository(sessions)
+            jobs = ResponsivePostgresJobRepository(sessions)
+            cipher = credential_cipher_from_env()
             return cls(
                 releases=ResponsivePostgresReleaseRepository(sessions),
-                jobs=ResponsivePostgresJobRepository(sessions),
+                jobs=jobs,
                 library=library,
-                downloader=MockDownloader(),
+                # Production PostgreSQL mode builds the live NNTP downloader lazily
+                # per operation so an unconfigured provider cannot prevent boot.
+                downloader=None,
                 importer=LibraryImporter(library),
                 engine=engine,
+                nntp_providers=PostgresNntpProviderRepository(sessions, cipher),
+                credential_key_available=cipher is not None,
             )
 
         library = LibraryRepository()
+        mock_downloader = MockDownloader()
         return cls(
             releases=ReleaseRepository(),
             jobs=JobRepository(),
             library=library,
-            downloader=MockDownloader(),
+            downloader=mock_downloader,
+            mock_downloader=mock_downloader,
             importer=LibraryImporter(library),
         )
 
@@ -77,6 +92,7 @@ def create_app() -> FastAPI:
 
     application.include_router(releases_router)
     application.include_router(library_router)
+    application.include_router(nntp_settings_router)
     return application
 
 

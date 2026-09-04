@@ -75,6 +75,10 @@ class ProviderSet:
             )
         )
 
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(config.name for config in self.ordered())
+
     def pool_for(self, name: str) -> ProviderPool:
         try:
             return self._pools[name]

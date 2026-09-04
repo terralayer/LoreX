@@ -35,11 +35,26 @@ Long-running indexer, downloader, and importer work runs in separate worker proc
 
 ## Development status
 
-LoreX is in initial development. The first milestone is a tested vertical slice:
+LoreX is in alpha development. The live NNTP integration includes authenticated TLS connections, provider/fill-server configuration, restart-safe group scanning with persisted checkpoints, XOVER/OVER overview retrieval, streaming BODY downloads, yEnc decoding, and bounded provider concurrency. A deterministic local TLS NNTP fixture exercises the full scan-to-library path without requiring real provider credentials in CI.
 
-`mock NNTP headers → audiobook release → search → mocked download → import → library`
+External provider credentials are intentionally not stored in source control or CI, so a real-provider smoke test is a deployment validation step rather than part of the public automated test suite.
 
 The project uses red-green testing and a measurement-first optimization program. The first reproducible performance reference is documented in [`docs/performance/baseline-0.1.1-alpha.md`](docs/performance/baseline-0.1.1-alpha.md). Performance changes must compare against the benchmark harness with fresh evidence rather than relying on subjective speed claims.
+
+## Live NNTP configuration
+
+LoreX encrypts NNTP usernames and passwords before storing them in PostgreSQL. The encryption key is supplied separately through `LOREX_CREDENTIAL_KEY`; the key itself is never stored in PostgreSQL.
+
+Before entering provider credentials:
+
+1. Generate one cryptographically random 32-byte credential key and encode it with URL-safe base64 without padding.
+2. Store that value as the TrueNAS/container secret or environment variable `LOREX_CREDENTIAL_KEY` for the API and scanner services.
+3. Back the credential key up separately from PostgreSQL. Losing the key means existing encrypted provider credentials cannot be recovered and must be re-entered.
+4. Never place the credential key in `docker-compose.yml`, committed configuration, screenshots, logs, or source control.
+
+Provider configuration is available under `/api/settings/nntp/providers`. Add the provider hostname, TLS port (normally 563), priority, connection limit, credentials, and one or more enabled audiobook groups. Mark secondary providers as fill servers when they should be tried after the primary provider. The provider test endpoint verifies TLS connection, authentication, and the first enabled configured group without returning stored credentials.
+
+LoreX production NNTP connections require certificate verification. There is no production option that disables TLS verification.
 
 ## Legal use
 

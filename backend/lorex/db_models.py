@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Identity, Index, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Identity, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -155,3 +155,37 @@ class ImportJobRow(Base):
     cpu_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     temp_bytes_peak: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     bytes_copied: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+
+class NntpProviderRow(Base):
+    __tablename__ = "nntp_providers"
+    __table_args__ = (UniqueConstraint("name", name="ux_nntp_providers_name"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    host: Mapped[str] = mapped_column(Text, nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False, default=563)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    fill_server: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    max_connections: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    username_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class NntpProviderGroupRow(Base):
+    __tablename__ = "nntp_provider_groups"
+    __table_args__ = (Index("ix_nntp_provider_groups_enabled", "provider_id", "enabled"),)
+
+    provider_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("nntp_providers.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    group_name_normalized: Mapped[str] = mapped_column(Text, primary_key=True)
+    group_name: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    scan_batch_size: Mapped[int] = mapped_column(Integer, nullable=False, default=5000)
+    backfill_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

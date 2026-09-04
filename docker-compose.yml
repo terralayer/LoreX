@@ -6,6 +6,7 @@ services:
     environment:
       LOREX_DATABASE_URL: postgresql://lorex:lorex@postgres:5432/lorex
       LOREX_REDIS_URL: redis://redis:6379/0
+      LOREX_CREDENTIAL_KEY: ${LOREX_CREDENTIAL_KEY:-}
     volumes:
       - ./data/config:/config
       - ./data/downloads:/downloads
@@ -15,6 +16,20 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  nntp-scanner:
+    build: .
+    command: ["python", "-m", "lorex.workers.nntp_scanner", "--once", "--mode", "live"]
+    environment:
+      LOREX_DATABASE_URL: postgresql://lorex:lorex@postgres:5432/lorex
+      LOREX_REDIS_URL: redis://redis:6379/0
+      LOREX_CREDENTIAL_KEY: ${LOREX_CREDENTIAL_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
 
   postgres:
     image: postgres:16-alpine
