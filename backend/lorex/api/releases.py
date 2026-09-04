@@ -10,6 +10,8 @@ from pydantic import BaseModel
 
 from lorex.domain import ArticleHeader, DownloadJob
 from lorex.indexer.nzb import get_or_build_nzb
+from lorex.nntp.errors import NntpConfigurationError
+from lorex.nntp.factory import build_live_downloader
 from lorex.services.indexing import index_headers
 from lorex.search import DownloadStatus, ImportStatus, ReleaseFormat, ReleaseSearchQuery, ReleaseSort, SortOrder
 
@@ -134,8 +136,26 @@ def process_next_download(request: Request) -> dict:
         container.jobs.mark_failed(job.id)
         raise HTTPException(status_code=409, detail="Queued release no longer exists")
     try:
-        result = container.downloader.download(release)
+        if container.downloader is not None:
+            result = container.downloader.download(release)
+        else:
+            if container.nntp_providers is None:
+                raise NntpConfigurationError("NNTP provider storage is unavailable")
+            if not container.credential_key_available:
+                raise NntpConfigurationError("LOREX_CREDENTIAL_KEY is required for live NNTP downloads")
+            articles = container.releases.get_articles(release.id)
+            if not articles:
+                raise NntpConfigurationError("Release has no persisted NNTP articles")
+            downloader = build_live_downloader(
+                container.nntp_providers,
+                state=container.jobs,
+                root="/downloads",
+            )
+            result = downloader.download_job(job, release, articles)
         book = container.importer.import_download(result)
+    except NntpConfigurationError as exc:
+        container.jobs.mark_failed(job.id)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception:
         container.jobs.mark_failed(job.id)
         raise
