@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +26,10 @@ from lorex.repository import JobRepository, LibraryRepository, ReleaseRepository
 from lorex.security.credentials import credential_cipher_from_env
 
 
+def _env_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(slots=True)
 class AppContainer:
     releases: Any
@@ -35,11 +40,13 @@ class AppContainer:
     engine: Engine | None = None
     nntp_providers: PostgresNntpProviderRepository | None = None
     credential_key_available: bool = False
+    mock_api_enabled: bool = False
     mock_downloader: MockDownloader = field(default_factory=MockDownloader)
     mock_release_ids: set[str] = field(default_factory=set)
 
     @classmethod
     def build(cls, database_url: str | None = None) -> "AppContainer":
+        mock_api_enabled = _env_enabled("LOREX_ENABLE_MOCK_API")
         if database_url:
             engine = create_engine_from_url(database_url)
             sessions = session_factory(engine)
@@ -57,6 +64,7 @@ class AppContainer:
                 engine=engine,
                 nntp_providers=PostgresNntpProviderRepository(sessions, cipher),
                 credential_key_available=cipher is not None,
+                mock_api_enabled=mock_api_enabled,
             )
 
         library = LibraryRepository()
@@ -65,7 +73,8 @@ class AppContainer:
             releases=ReleaseRepository(),
             jobs=JobRepository(),
             library=library,
-            downloader=mock_downloader,
+            downloader=mock_downloader if mock_api_enabled else None,
+            mock_api_enabled=mock_api_enabled,
             mock_downloader=mock_downloader,
             importer=LibraryImporter(library),
         )
