@@ -46,7 +46,7 @@ def test_postprocessor_reassembles_multipart_direct_audio_in_order(tmp_path: Pat
     assert processed.size == len(b"first-second")
 
 
-def test_postprocessor_uses_par2_and_7z_for_archive_payload(tmp_path: Path) -> None:
+def test_postprocessor_uses_par2_and_unar_for_rar_payload(tmp_path: Path) -> None:
     par2 = tmp_path / "par2-part"
     archive = tmp_path / "rar-part"
     par2.write_bytes(b"PAR2\x00PKT" + b"p" * 16)
@@ -55,9 +55,9 @@ def test_postprocessor_uses_par2_and_7z_for_archive_payload(tmp_path: Path) -> N
 
     def runner(args: list[str], cwd: Path) -> None:
         commands.append(args)
-        if args[0] == "7z":
-            output_arg = next(item for item in args if item.startswith("-o"))
-            output_dir = Path(output_arg[2:])
+        if args[0] == "unar":
+            output_index = args.index("-output-directory") + 1
+            output_dir = Path(args[output_index])
             output_dir.mkdir(parents=True, exist_ok=True)
             (output_dir / "Synthetic Book.m4b").write_bytes(b"audio")
 
@@ -70,6 +70,27 @@ def test_postprocessor_uses_par2_and_7z_for_archive_payload(tmp_path: Path) -> N
     )
 
     assert any(command[0] == "par2" for command in commands)
+    assert any(command[0] == "unar" for command in commands)
+    assert processed.path.read_bytes() == b"audio"
+
+
+def test_postprocessor_uses_7z_for_7z_payload(tmp_path: Path) -> None:
+    archive = tmp_path / "7z-part"
+    archive.write_bytes(b"7z\xbc\xaf'\x1c" + b"r" * 16)
+    commands: list[list[str]] = []
+
+    def runner(args: list[str], cwd: Path) -> None:
+        commands.append(args)
+        if args[0] == "7z":
+            output_arg = next(item for item in args if item.startswith("-o"))
+            output_dir = Path(output_arg[2:])
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "Synthetic Book.m4b").write_bytes(b"audio")
+
+    processed = PostProcessor(command_runner=runner).process(
+        _result(tmp_path, (archive,), ('"Synthetic Book.7z" yEnc [1/1]',))
+    )
+
     assert any(command[0] == "7z" for command in commands)
     assert processed.path.read_bytes() == b"audio"
 
