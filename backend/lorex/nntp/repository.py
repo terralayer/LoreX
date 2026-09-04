@@ -44,8 +44,6 @@ class PostgresNntpProviderRepository:
     def _normalize_groups(groups: Iterable[NntpProviderGroup]) -> tuple[NntpProviderGroup, ...]:
         normalized: dict[str, NntpProviderGroup] = {}
         for group in groups:
-            # Construction has already applied range validation. Reconstructing
-            # also protects callers that hand us subclass/proxy values.
             clean = NntpProviderGroup(
                 group_name=group.group_name,
                 enabled=group.enabled,
@@ -99,6 +97,10 @@ class PostgresNntpProviderRepository:
                         updated_at=now,
                     )
                 )
+                # No ORM relationship is declared between these focused row
+                # models, so make the FK dependency explicit before inserting
+                # child rows.
+                session.flush()
                 self._replace_groups(session, provider_id, clean_groups)
         except IntegrityError as exc:
             raise ValueError("provider name must be unique") from exc
