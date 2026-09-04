@@ -153,6 +153,7 @@ class StreamingDownloader:
             size=total_bytes,
             staging_dir=str(job_dir),
             article_paths=ordered_paths,
+            article_subjects=tuple(article.subject for article in materialized_articles),
         )
 
     def _download_article(
