@@ -155,27 +155,15 @@ def test_provider_bounds_are_enforced(provider_repo, kwargs):
 
 
 @pytest.mark.parametrize(
-    "group",
+    "group_kwargs",
     [
-        NntpProviderGroup(group_name="", scan_batch_size=5000, backfill_days=1),
-        NntpProviderGroup(group_name="alt.binaries.audiobooks", scan_batch_size=99, backfill_days=1),
-        NntpProviderGroup(group_name="alt.binaries.audiobooks", scan_batch_size=50001, backfill_days=1),
-        NntpProviderGroup(group_name="alt.binaries.audiobooks", scan_batch_size=5000, backfill_days=-1),
-        NntpProviderGroup(group_name="alt.binaries.audiobooks", scan_batch_size=5000, backfill_days=10001),
+        {"group_name": "", "scan_batch_size": 5000, "backfill_days": 1},
+        {"group_name": "alt.binaries.audiobooks", "scan_batch_size": 99, "backfill_days": 1},
+        {"group_name": "alt.binaries.audiobooks", "scan_batch_size": 50001, "backfill_days": 1},
+        {"group_name": "alt.binaries.audiobooks", "scan_batch_size": 5000, "backfill_days": -1},
+        {"group_name": "alt.binaries.audiobooks", "scan_batch_size": 5000, "backfill_days": 10001},
     ],
 )
-def test_group_bounds_are_enforced(provider_repo, group):
-    repo, _ = provider_repo
+def test_group_bounds_are_enforced(group_kwargs):
     with pytest.raises(ValueError):
-        repo.create(
-            name="Invalid Group",
-            host="news.example.test",
-            port=563,
-            enabled=True,
-            priority=100,
-            fill_server=False,
-            max_connections=4,
-            username=None,
-            password=None,
-            groups=[group],
-        )
+        NntpProviderGroup(**group_kwargs)
