@@ -24,8 +24,10 @@ def client(monkeypatch):
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "TRUNCATE release_articles, indexer_checkpoints, releases, "
-                    "download_jobs, import_jobs, library_books RESTART IDENTITY CASCADE"
+                    "TRUNCATE activity_events, scanner_group_state, runtime_settings, "
+                    "nntp_provider_groups, nntp_providers, provider_health, download_articles, "
+                    "release_articles, indexer_checkpoints, releases, download_jobs, import_jobs, "
+                    "library_books RESTART IDENTITY CASCADE"
                 )
             )
         engine.dispose()
