@@ -8,7 +8,7 @@ from lorex.indexer.classifier import classify_audiobook
 from lorex.indexer.grouping import StreamingHeaderGrouper
 from lorex.repository import ReleaseRepository
 
-_AUDIO_FORMATS = {"m4b", "m4a", "mp3", "flac", "aac"}
+_INDEXABLE_FORMATS = {"m4b", "m4a", "mp3", "flac", "aac", "archive"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +30,7 @@ def _parse_identity(subject: str) -> tuple[str, str, str | None, str]:
     stem, separator, suffix = subject.rpartition(".")
     if separator:
         fmt = suffix.casefold() or "unknown"
-        clean = stem.strip() if fmt in _AUDIO_FORMATS else subject.strip()
+        clean = stem.strip() if fmt in _INDEXABLE_FORMATS else subject.strip()
     else:
         fmt = "unknown"
         clean = subject.strip()
