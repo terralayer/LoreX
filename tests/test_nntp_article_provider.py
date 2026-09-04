@@ -24,18 +24,21 @@ def _provider(name: str = "Primary") -> NntpProvider:
 
 
 def _yenc(payload: bytes) -> list[bytes]:
-    encoded = bytearray()
+    lines: list[bytes] = []
+    line = bytearray()
     for value in payload:
         shifted = (value + 42) & 0xFF
-        if shifted in {0, 9, 10, 13, 61}:
-            encoded.append(61)
-            encoded.append((shifted + 64) & 0xFF)
-        else:
-            encoded.append(shifted)
+        token = bytes((61, (shifted + 64) & 0xFF)) if shifted in {0, 9, 10, 13, 61} else bytes((shifted,))
+        if line and len(line) + len(token) > 128:
+            lines.append(bytes(line) + b"\r\n")
+            line.clear()
+        line.extend(token)
+    if line:
+        lines.append(bytes(line) + b"\r\n")
     crc = zlib.crc32(payload) & 0xFFFFFFFF
     return [
         f"=ybegin line=128 size={len(payload)} name=fixture.bin\r\n".encode(),
-        bytes(encoded) + b"\r\n",
+        *lines,
         f"=yend size={len(payload)} crc32={crc:08x}\r\n".encode(),
     ]
 
