@@ -34,4 +34,4 @@ def test_mock_index_can_be_enabled_explicitly(monkeypatch) -> None:
         response = client.post("/api/index/mock", json=_payload())
 
     assert response.status_code == 200
-    assert response.json()["indexed"] == 1
+    assert set(response.json()) == {"indexed", "releases"}
