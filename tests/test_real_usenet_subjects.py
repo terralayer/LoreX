@@ -93,3 +93,24 @@ def test_software_archive_in_audiobook_group_is_rejected():
     assert stats.releases_indexed == 0
     assert stats.releases_rejected == 1
     assert repository.search("") == []
+
+
+def test_obfuscated_archive_in_audiobook_group_is_accepted():
+    repository = ReleaseRepository()
+    headers = [
+        _header(
+            "<obf-par2@example.test>",
+            'poster - [1/3] - "9f7a6c2b8e1d4a77.par2" yEnc (1/1)',
+        ),
+        _header(
+            "<obf-rar@example.test>",
+            'poster - [2/3] - "9f7a6c2b8e1d4a77.part1.rar" yEnc (1/1)',
+        ),
+    ]
+
+    stats = index_batches([IndexBatch(headers=headers)], repository)
+
+    assert stats.headers_received == 2
+    assert stats.releases_indexed == 1
+    assert stats.releases_rejected == 0
+    assert repository.search("")[0].format == "archive"
