@@ -5,7 +5,7 @@ from lorex.domain import ReleaseCandidate
 _AUDIO_EXTENSIONS = (".m4b", ".m4a", ".mp3", ".flac", ".aac")
 _ARCHIVE_EXTENSION = ".archive"
 _POSITIVE_TERMS = ("audiobook", "unabridged", "narrated", "narrator")
-_NEGATIVE_TERMS = ("1080p", "2160p", "x264", "x265", ".mkv", ".avi", "bluray", "web-dl", "game", "software")
+_NEGATIVE_TERMS = ("1080p", "2160p", "x264", "x265", ".mkv", ".avi", "bluray", "web-dl", "software")
 _SOFTWARE_ARCHIVE_MARKERS = (
     "(x64)",
     "(x86)",
@@ -21,11 +21,6 @@ _SOFTWARE_ARCHIVE_MARKERS = (
 )
 
 
-def _looks_like_book_archive(subject: str) -> bool:
-    stem = subject[: -len(_ARCHIVE_EXTENSION)] if subject.endswith(_ARCHIVE_EXTENSION) else subject
-    return " - " in stem or " by " in stem or any(term in stem for term in _POSITIVE_TERMS)
-
-
 def classify_audiobook(candidate: ReleaseCandidate) -> float:
     subject = candidate.subject_stem.casefold()
     score = 0.0
@@ -33,19 +28,18 @@ def classify_audiobook(candidate: ReleaseCandidate) -> float:
     is_audio = subject.endswith(_AUDIO_EXTENSIONS)
     is_archive = subject.endswith(_ARCHIVE_EXTENSION)
 
-    if is_archive and any(marker in subject for marker in _SOFTWARE_ARCHIVE_MARKERS):
+    # alt.binaries.audiobooks contains cross-posts. Reject strong software and
+    # video signatures before the source-group bonus is considered, but do not
+    # require readable author/title text: real audiobook posts are often
+    # intentionally obfuscated archive names.
+    if is_archive and (
+        any(marker in subject for marker in _SOFTWARE_ARCHIVE_MARKERS)
+        or any(term in subject for term in _NEGATIVE_TERMS)
+    ):
         return 0.0
 
-    if is_audio:
+    if is_audio or is_archive:
         score += 0.7
-    elif is_archive:
-        # Archive/PAR2/RAR payloads are common for audiobooks, but archive
-        # extension plus group name alone is not enough evidence: binary groups
-        # contain cross-posted software and other unrelated payloads.
-        score += 0.4
-        if _looks_like_book_archive(subject):
-            score += 0.3
-
     if any(term in subject for term in _POSITIVE_TERMS):
         score += 0.2
     if any("audiobook" in header.group.casefold() for header in candidate.headers):
