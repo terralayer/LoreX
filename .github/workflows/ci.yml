@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: lorex-ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -117,6 +121,7 @@ jobs:
           python -m benchmarks.run_baseline --profile ci --output benchmark-results --frontend-dist frontend/dist 2>&1 | tee benchmark-results/runner.log
           python -m benchmarks.run_pr6 --output benchmark-results 2>&1 | tee benchmark-results/pr6-runner.log
           python -m benchmarks.run_pr7 --output benchmark-results 2>&1 | tee benchmark-results/pr7-runner.log
+          python -m benchmarks.run_pr8 --output benchmark-results --frontend-dist frontend/dist 2>&1 | tee benchmark-results/pr8-runner.log
       - name: Publish benchmark summary
         if: always() && hashFiles('benchmark-results/baseline.md') != ''
         run: |
@@ -128,6 +133,10 @@ jobs:
           if [ -f benchmark-results/pr7-metadata.md ]; then
             printf '\n' >> "$GITHUB_STEP_SUMMARY"
             cat benchmark-results/pr7-metadata.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f benchmark-results/pr8-ui-api.md ]; then
+            printf '\n' >> "$GITHUB_STEP_SUMMARY"
+            cat benchmark-results/pr8-ui-api.md >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Upload benchmark artifact
         if: always() && hashFiles('benchmark-results/**') != ''
