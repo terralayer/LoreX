@@ -111,7 +111,8 @@ def _download_release(container, job: DownloadJob, release):
     downloader = build_live_downloader(
         container.nntp_providers,
         state=container.jobs,
-        root="/downloads",
+        root=getattr(container, "download_root", "/downloads"),
+        client_factory=getattr(container, "nntp_client_factory", None),
     )
     return downloader.download_job(job, release, articles)
 
@@ -142,9 +143,6 @@ def process_next_download(container, *, worker_id: str) -> DownloadProcessResult
 
         _set_status(container.jobs, job.id, "postprocessing")
         if _is_explicit_mock_release(container, release.id):
-            # Synthetic test/demo releases intentionally do not create physical
-            # Usenet staging files. This compatibility path is impossible unless
-            # the mock API was explicitly enabled.
             _set_status(container.jobs, job.id, "importing")
             book = container.importer.import_download(result)
         else:
