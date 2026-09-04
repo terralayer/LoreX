@@ -50,3 +50,14 @@ def test_scan_now_rejects_stale_scanner_worker_heartbeat(client) -> None:
 
     assert response.status_code == 503
     assert "scanner worker is offline" in response.json()["detail"].lower()
+
+
+def test_scan_now_rejects_request_when_indexer_is_disabled(client) -> None:
+    _write_scanner_heartbeat(client, datetime.now(UTC))
+    patched = client.patch("/api/indexer/settings", json={"enabled": False})
+    assert patched.status_code == 200
+
+    response = client.post("/api/indexer/scan-now")
+
+    assert response.status_code == 409
+    assert "indexer is disabled" in response.json()["detail"].lower()
