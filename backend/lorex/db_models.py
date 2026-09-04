@@ -180,8 +180,8 @@ class NntpProviderGroupRow(Base):
     __table_args__ = (Index("ix_nntp_provider_groups_enabled", "provider_id", "enabled"),)
 
     provider_id: Mapped[str] = mapped_column(
-        ForeignKey("nntp_providers.id", ondelete="CASCADE"),
         String(32),
+        ForeignKey("nntp_providers.id", ondelete="CASCADE"),
         primary_key=True,
     )
     group_name_normalized: Mapped[str] = mapped_column(Text, primary_key=True)
