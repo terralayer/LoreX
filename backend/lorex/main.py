@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy import Engine
 
+from lorex.api.downloads import router as downloads_router
 from lorex.api.indexer import router as indexer_router
 from lorex.api.library import router as library_router
 from lorex.api.nntp_settings import router as nntp_settings_router
@@ -109,6 +110,7 @@ def create_app() -> FastAPI:
     application.include_router(library_router)
     application.include_router(nntp_settings_router)
     application.include_router(indexer_router)
+    application.include_router(downloads_router)
 
     frontend_dist = Path("frontend-dist")
     frontend_index = frontend_dist / "index.html"
