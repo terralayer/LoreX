@@ -5,6 +5,8 @@ from dataclasses import asdict
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from lorex.nntp.client import NntpClient
+from lorex.nntp.errors import NntpAuthenticationError, NntpError, NntpTemporaryError
 from lorex.nntp.models import NntpProviderGroup, ProviderSecretUpdate
 from lorex.security.credentials import CredentialError
 
@@ -71,6 +73,12 @@ class ProviderResponse(BaseModel):
 class ProviderListResponse(BaseModel):
     count: int
     providers: list[ProviderResponse]
+
+
+class ProviderTestResponse(BaseModel):
+    status: str
+    provider_id: str
+    group: str | None = None
 
 
 def _repo(request: Request):
@@ -167,6 +175,40 @@ def patch_provider(provider_id: str, payload: ProviderPatchInput, request: Reque
         raise _credential_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/{provider_id}/test", response_model=ProviderTestResponse)
+def test_provider_connection(provider_id: str, request: Request) -> ProviderTestResponse:
+    container = request.app.state.container
+    if not getattr(container, "credential_key_available", False):
+        raise HTTPException(status_code=503, detail="Provider credential encryption is not configured")
+    repo = _repo(request)
+    try:
+        provider = repo.get(provider_id)
+    except CredentialError as exc:
+        raise _credential_error(exc) from exc
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    if (provider.username is None) != (provider.password is None):
+        raise HTTPException(status_code=422, detail="Provider username and password must be configured together")
+
+    group = next((item.group_name for item in provider.groups if item.enabled), None)
+    try:
+        with NntpClient(provider.host, provider.port) as client:
+            if provider.username is not None and provider.password is not None:
+                client.authenticate(provider.username, provider.password)
+            if group is not None:
+                client.group(group)
+    except NntpAuthenticationError as exc:
+        raise HTTPException(status_code=401, detail="NNTP provider authentication failed") from exc
+    except NntpTemporaryError as exc:
+        raise HTTPException(status_code=503, detail="NNTP provider is temporarily unavailable") from exc
+    except NntpError as exc:
+        raise HTTPException(status_code=502, detail="NNTP provider protocol test failed") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail="NNTP provider connection failed") from exc
+
+    return ProviderTestResponse(status="ok", provider_id=provider.id, group=group)
 
 
 @router.post("/{provider_id}/credentials/{field_name}/clear", response_model=ProviderResponse)
