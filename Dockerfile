@@ -5,8 +5,11 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends par2 7zip unar ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md ./
 COPY alembic.ini ./alembic.ini
 COPY migrations/ ./migrations/
