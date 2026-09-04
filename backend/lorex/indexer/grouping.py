@@ -2,9 +2,27 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
+import re
 from typing import Callable
 
 from lorex.domain import ArticleHeader, ReleaseCandidate
+
+_YENC_QUOTED_RE = re.compile(
+    r'"(?P<filename>[^"]+)"\s+yenc(?:\s+\((?P<part>\d+)\s*/\s*(?P<total>\d+)\))?\s*$',
+    re.IGNORECASE,
+)
+_ARCHIVE_SUFFIX_RE = re.compile(
+    r"(?ix)(?:"
+    r"\.vol\d+\+\d+\.par2"
+    r"|\.par2"
+    r"|\.part\d+\.rar"
+    r"|\.r\d{2,3}"
+    r"|\.rar"
+    r"|\.7z\.\d{3}"
+    r"|\.7z"
+    r"|\.zip"
+    r")$"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,8 +33,45 @@ class NormalizedHeader:
     total_parts: int | None
 
 
+def _archive_release_stem(filename: str) -> str | None:
+    match = _ARCHIVE_SUFFIX_RE.search(filename.strip())
+    if match is None:
+        return None
+    root = filename[: match.start()].strip()
+    return f"{root}.archive" if root else None
+
+
 def _split_part_suffix(subject: str) -> tuple[str, int | None, int | None]:
     stripped = subject.rstrip()
+
+    # Real Usenet audiobook subjects generally wrap the payload filename in
+    # quotes and put the yEnc chunk counter at the end, for example:
+    #   ... "Author - Title.m4b" yEnc (01/123)
+    # Keep the original ArticleHeader untouched for NZB/BODY retrieval, but
+    # normalize the grouping key to the actual payload filename.
+    yenc = _YENC_QUOTED_RE.search(stripped)
+    if yenc is not None:
+        filename = yenc.group("filename").strip()
+        archive_stem = _archive_release_stem(filename)
+        if archive_stem is not None:
+            # An archive release is made of several independent physical files
+            # (PAR2, RAR parts, etc.). Treat each overview row as unnumbered at
+            # the release level so all files sharing the archive root stay in
+            # one candidate until the batch is flushed.
+            return archive_stem, None, None
+
+        raw_part = yenc.group("part")
+        raw_total = yenc.group("total")
+        if raw_part is None or raw_total is None:
+            return filename, None, None
+        part_number = int(raw_part)
+        total_parts = int(raw_total)
+        if part_number < 1 or total_parts < 1 or part_number > total_parts:
+            return filename, None, None
+        return filename, part_number, total_parts
+
+    # Preserve the original LoreX/test fixture form:
+    #   Author - Title - Narrator.m4b [1/3]
     if not stripped.endswith("]"):
         return subject.strip(), None, None
 
