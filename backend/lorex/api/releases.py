@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from uuid import uuid4
-
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
-from lorex.domain import ArticleHeader, DownloadJob
+from lorex.domain import ArticleHeader
 from lorex.indexer.nzb import get_or_build_nzb
-from lorex.nntp.errors import NntpConfigurationError
-from lorex.nntp.factory import build_live_downloader
+from lorex.services.download_jobs import process_next_download as process_download_job
+from lorex.services.download_jobs import queue_release
 from lorex.services.indexing import index_headers
 from lorex.search import DownloadStatus, ImportStatus, ReleaseFormat, ReleaseSearchQuery, ReleaseSort, SortOrder
 
@@ -120,49 +118,24 @@ def release_nzb(release_id: str, request: Request) -> Response:
 
 @router.post("/releases/{release_id}/grab")
 def grab_release(release_id: str, request: Request) -> dict:
-    container = request.app.state.container
-    if container.releases.get(release_id) is None:
-        raise HTTPException(status_code=404, detail="Release not found")
-    job = DownloadJob(id=uuid4().hex[:12], release_id=release_id)
-    container.jobs.add(job)
+    try:
+        job = queue_release(request.app.state.container, release_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Release not found") from exc
     return asdict(job)
 
 
 @router.post("/downloads/process-next")
 def process_next_download(request: Request) -> dict:
-    container = request.app.state.container
-    job = container.jobs.pop_next()
-    if job is None:
+    result = process_download_job(request.app.state.container, worker_id="compat-api")
+    if result is None:
         raise HTTPException(status_code=404, detail="No queued downloads")
-    release = container.releases.get(job.release_id)
-    if release is None:
-        container.jobs.mark_failed(job.id)
-        raise HTTPException(status_code=409, detail="Queued release no longer exists")
-    try:
-        if release.id in container.mock_release_ids and container.mock_api_enabled:
-            result = container.mock_downloader.download(release)
-        elif container.downloader is not None:
-            result = container.downloader.download(release)
-        else:
-            if container.nntp_providers is None:
-                raise NntpConfigurationError("NNTP provider storage is unavailable")
-            if not container.credential_key_available:
-                raise NntpConfigurationError("LOREX_CREDENTIAL_KEY is required for live NNTP downloads")
-            articles = container.releases.get_articles(release.id)
-            if not articles:
-                raise NntpConfigurationError("Release has no persisted NNTP articles")
-            downloader = build_live_downloader(
-                container.nntp_providers,
-                state=container.jobs,
-                root="/downloads",
-            )
-            result = downloader.download_job(job, release, articles)
-        book = container.importer.import_download(result)
-    except NntpConfigurationError as exc:
-        container.jobs.mark_failed(job.id)
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception:
-        container.jobs.mark_failed(job.id)
-        raise
-    container.jobs.mark_completed(job.id)
-    return {"job_id": job.id, "status": "completed", "book": asdict(book)}
+    if result.status == "failed":
+        detail = result.error or "Download failed"
+        if detail.startswith("NntpConfigurationError:"):
+            raise HTTPException(status_code=503, detail=detail.partition(":")[2].strip())
+        raise HTTPException(status_code=500, detail=detail)
+    payload = {"job_id": result.job_id, "status": result.status}
+    if result.book is not None:
+        payload["book"] = asdict(result.book)
+    return payload
