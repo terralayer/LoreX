@@ -139,6 +139,13 @@ class StreamingDownloader:
                         _byte_count, _provider, complete_path = future.result()
                         output_paths[article.message_id] = complete_path
                         submit_next()
+        except DownloadCancelled:
+            raise
+        except Exception:
+            mark_failed = getattr(self.state, "mark_failed", None)
+            if mark_failed is not None:
+                mark_failed(job.id)
+            raise
         finally:
             flush_progress()
 
