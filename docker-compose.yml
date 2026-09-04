@@ -1,4 +1,14 @@
 services:
+  migrate:
+    build: .
+    command: ["true"]
+    environment:
+      LOREX_DATABASE_URL: postgresql://lorex:lorex@postgres:5432/lorex
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build: .
     ports:
@@ -12,10 +22,11 @@ services:
       - ./data/downloads:/downloads
       - ./data/library:/library
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+    restart: unless-stopped
 
   nntp-scanner:
     build: .
@@ -25,8 +36,26 @@ services:
       LOREX_REDIS_URL: redis://redis:6379/0
       LOREX_CREDENTIAL_KEY: ${LOREX_CREDENTIAL_KEY:-}
     depends_on:
-      postgres:
+      migrate:
+        condition: service_completed_successfully
+      redis:
         condition: service_healthy
+    restart: unless-stopped
+
+  download-worker:
+    build: .
+    command: ["python", "-m", "lorex.workers.download_worker"]
+    environment:
+      LOREX_DATABASE_URL: postgresql://lorex:lorex@postgres:5432/lorex
+      LOREX_REDIS_URL: redis://redis:6379/0
+      LOREX_CREDENTIAL_KEY: ${LOREX_CREDENTIAL_KEY:-}
+    volumes:
+      - ./data/config:/config
+      - ./data/downloads:/downloads
+      - ./data/library:/library
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     restart: unless-stopped
