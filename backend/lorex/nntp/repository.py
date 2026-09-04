@@ -9,24 +9,29 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lorex.db_models import NntpProviderGroupRow, NntpProviderRow
-from lorex.nntp.models import NntpProvider, NntpProviderGroup, ProviderSecretUpdate
-from lorex.security.credentials import CredentialCipher
+from lorex.nntp.models import (
+    NntpProvider,
+    NntpProviderGroup,
+    NntpProviderSummary,
+    ProviderSecretUpdate,
+)
+from lorex.security.credentials import CredentialCipher, CredentialError
 
 _UNSET = object()
 
 
 class PostgresNntpProviderRepository:
-    def __init__(self, sessions: sessionmaker[Session], cipher: CredentialCipher) -> None:
+    def __init__(
+        self,
+        sessions: sessionmaker[Session],
+        cipher: CredentialCipher | None,
+    ) -> None:
         self._sessions = sessions
         self._cipher = cipher
 
     @staticmethod
     def _validate_provider(
-        *,
-        name: str,
-        host: str,
-        port: int,
-        max_connections: int,
+        *, name: str, host: str, port: int, max_connections: int
     ) -> tuple[str, str]:
         clean_name = name.strip()
         clean_host = host.strip()
@@ -68,17 +73,13 @@ class PostgresNntpProviderRepository:
         groups: Iterable[NntpProviderGroup] = (),
     ) -> NntpProvider:
         clean_name, clean_host = self._validate_provider(
-            name=name,
-            host=host,
-            port=port,
-            max_connections=max_connections,
+            name=name, host=host, port=port, max_connections=max_connections
         )
         clean_groups = self._normalize_groups(groups)
         provider_id = uuid4().hex
         now = datetime.now(UTC)
-        username_encrypted = None if username is None else self._cipher.encrypt(provider_id, "username", username)
-        password_encrypted = None if password is None else self._cipher.encrypt(provider_id, "password", password)
-
+        username_encrypted = self._encrypt_optional(provider_id, "username", username)
+        password_encrypted = self._encrypt_optional(provider_id, "password", password)
         try:
             with self._sessions.begin() as session:
                 session.add(
@@ -97,14 +98,10 @@ class PostgresNntpProviderRepository:
                         updated_at=now,
                     )
                 )
-                # No ORM relationship is declared between these focused row
-                # models, so make the FK dependency explicit before inserting
-                # child rows.
                 session.flush()
                 self._replace_groups(session, provider_id, clean_groups)
         except IntegrityError as exc:
             raise ValueError("provider name must be unique") from exc
-
         provider = self.get(provider_id)
         assert provider is not None
         return provider
@@ -114,20 +111,25 @@ class PostgresNntpProviderRepository:
             row = session.get(NntpProviderRow, provider_id)
             if row is None:
                 return None
-            groups = tuple(
-                self._group_from_row(group)
-                for group in session.scalars(
-                    select(NntpProviderGroupRow)
-                    .where(NntpProviderGroupRow.provider_id == provider_id)
-                    .order_by(NntpProviderGroupRow.group_name_normalized)
-                )
-            )
+            groups = self._load_groups(session, provider_id)
             return self._provider_from_row(row, groups)
+
+    def get_masked(self, provider_id: str) -> NntpProviderSummary | None:
+        with self._sessions() as session:
+            row = session.get(NntpProviderRow, provider_id)
+            if row is None:
+                return None
+            return self._summary_from_row(row, self._load_groups(session, provider_id))
 
     def list_all(self) -> list[NntpProvider]:
         with self._sessions() as session:
             ids = list(session.scalars(select(NntpProviderRow.id).order_by(NntpProviderRow.name, NntpProviderRow.id)))
         return [provider for provider_id in ids if (provider := self.get(provider_id)) is not None]
+
+    def list_masked(self) -> list[NntpProviderSummary]:
+        with self._sessions() as session:
+            rows = list(session.scalars(select(NntpProviderRow).order_by(NntpProviderRow.name, NntpProviderRow.id)))
+            return [self._summary_from_row(row, self._load_groups(session, row.id)) for row in rows]
 
     def list_enabled(self) -> list[NntpProvider]:
         with self._sessions() as session:
@@ -154,13 +156,12 @@ class PostgresNntpProviderRepository:
         username: ProviderSecretUpdate | str | None | object = _UNSET,
         password: ProviderSecretUpdate | str | None | object = _UNSET,
         groups: Iterable[NntpProviderGroup] | object = _UNSET,
-    ) -> NntpProvider:
+    ) -> NntpProviderSummary:
         try:
             with self._sessions.begin() as session:
                 row = session.get(NntpProviderRow, provider_id)
                 if row is None:
                     raise KeyError(provider_id)
-
                 next_name = row.name if name is _UNSET else str(name)
                 next_host = row.host if host is _UNSET else str(host)
                 next_port = row.port if port is _UNSET else int(port)
@@ -181,24 +182,17 @@ class PostgresNntpProviderRepository:
                     row.priority = int(priority)
                 if fill_server is not _UNSET:
                     row.fill_server = bool(fill_server)
-
-                row.username_encrypted = self._updated_secret(
-                    provider_id, "username", row.username_encrypted, username
-                )
-                row.password_encrypted = self._updated_secret(
-                    provider_id, "password", row.password_encrypted, password
-                )
+                row.username_encrypted = self._updated_secret(provider_id, "username", row.username_encrypted, username)
+                row.password_encrypted = self._updated_secret(provider_id, "password", row.password_encrypted, password)
                 row.updated_at = datetime.now(UTC)
-
                 if groups is not _UNSET:
                     assert not isinstance(groups, (str, bytes))
                     self._replace_groups(session, provider_id, self._normalize_groups(groups))
         except IntegrityError as exc:
             raise ValueError("provider name must be unique") from exc
-
-        provider = self.get(provider_id)
-        assert provider is not None
-        return provider
+        summary = self.get_masked(provider_id)
+        assert summary is not None
+        return summary
 
     def delete(self, provider_id: str) -> bool:
         with self._sessions.begin() as session:
@@ -207,6 +201,13 @@ class PostgresNntpProviderRepository:
                 return False
             session.delete(row)
         return True
+
+    def _encrypt_optional(self, provider_id: str, field_name: str, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if self._cipher is None:
+            raise CredentialError("credential master key is not configured")
+        return self._cipher.encrypt(provider_id, field_name, value)
 
     def _updated_secret(
         self,
@@ -223,19 +224,15 @@ class PostgresNntpProviderRepository:
             if update.is_clear:
                 return None
             assert update.value is not None
-            return self._cipher.encrypt(provider_id, field_name, update.value)
+            return self._encrypt_optional(provider_id, field_name, update.value)
         if update is None:
-            return None
+            return current
         if isinstance(update, str):
-            return self._cipher.encrypt(provider_id, field_name, update)
+            return self._encrypt_optional(provider_id, field_name, update)
         raise ValueError("invalid secret update")
 
     @staticmethod
-    def _replace_groups(
-        session: Session,
-        provider_id: str,
-        groups: tuple[NntpProviderGroup, ...],
-    ) -> None:
+    def _replace_groups(session: Session, provider_id: str, groups: tuple[NntpProviderGroup, ...]) -> None:
         session.execute(delete(NntpProviderGroupRow).where(NntpProviderGroupRow.provider_id == provider_id))
         for group in groups:
             session.add(
@@ -258,21 +255,21 @@ class PostgresNntpProviderRepository:
             backfill_days=row.backfill_days,
         )
 
-    def _provider_from_row(
-        self,
-        row: NntpProviderRow,
-        groups: tuple[NntpProviderGroup, ...],
-    ) -> NntpProvider:
-        username = (
-            None
-            if row.username_encrypted is None
-            else self._cipher.decrypt(row.id, "username", row.username_encrypted)
+    def _load_groups(self, session: Session, provider_id: str) -> tuple[NntpProviderGroup, ...]:
+        return tuple(
+            self._group_from_row(group)
+            for group in session.scalars(
+                select(NntpProviderGroupRow)
+                .where(NntpProviderGroupRow.provider_id == provider_id)
+                .order_by(NntpProviderGroupRow.group_name_normalized)
+            )
         )
-        password = (
-            None
-            if row.password_encrypted is None
-            else self._cipher.decrypt(row.id, "password", row.password_encrypted)
-        )
+
+    def _provider_from_row(self, row: NntpProviderRow, groups: tuple[NntpProviderGroup, ...]) -> NntpProvider:
+        if (row.username_encrypted is not None or row.password_encrypted is not None) and self._cipher is None:
+            raise CredentialError("credential master key is not configured")
+        username = None if row.username_encrypted is None else self._cipher.decrypt(row.id, "username", row.username_encrypted)  # type: ignore[union-attr]
+        password = None if row.password_encrypted is None else self._cipher.decrypt(row.id, "password", row.password_encrypted)  # type: ignore[union-attr]
         return NntpProvider(
             id=row.id,
             name=row.name,
@@ -284,5 +281,21 @@ class PostgresNntpProviderRepository:
             max_connections=row.max_connections,
             username=username,
             password=password,
+            groups=groups,
+        )
+
+    @staticmethod
+    def _summary_from_row(row: NntpProviderRow, groups: tuple[NntpProviderGroup, ...]) -> NntpProviderSummary:
+        return NntpProviderSummary(
+            id=row.id,
+            name=row.name,
+            host=row.host,
+            port=row.port,
+            enabled=row.enabled,
+            priority=row.priority,
+            fill_server=row.fill_server,
+            max_connections=row.max_connections,
+            username_configured=row.username_encrypted is not None,
+            password_configured=row.password_encrypted is not None,
             groups=groups,
         )
