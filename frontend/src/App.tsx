@@ -3,10 +3,12 @@ import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from 'react'
 const HomePage = lazy(() => import('./routes/HomePage'))
 const LibraryPage = lazy(() => import('./routes/LibraryPage'))
 const SearchPage = lazy(() => import('./routes/SearchPage'))
+const SettingsPage = lazy(() => import('./routes/SettingsPage'))
 
 const nav = [
   { label: 'Home', route: '/' },
   { label: 'Library', route: '/library' },
+  { label: 'Settings', route: '/settings' },
 ]
 
 type Route = { path: string; query: URLSearchParams }
@@ -44,6 +46,7 @@ export default function App() {
   const content = useMemo(() => {
     if (route.path === '/library') return <LibraryPage />
     if (route.path === '/search') return <SearchPage initialQuery={route.query.get('q') ?? ''} />
+    if (route.path === '/settings') return <SettingsPage />
     return <HomePage />
   }, [route])
 
