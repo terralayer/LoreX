@@ -19,6 +19,7 @@ from lorex.db import create_engine_from_url, database_url_from_env, session_fact
 from lorex.downloader.mock import MockDownloader
 from lorex.library.importer import LibraryImporter
 from lorex.nntp.repository import PostgresNntpProviderRepository
+from lorex.postprocess import PostProcessor
 from lorex.read_repository import (
     ResponsivePostgresJobRepository,
     ResponsivePostgresLibraryRepository,
@@ -40,6 +41,7 @@ class AppContainer:
     library: Any
     downloader: Any
     importer: LibraryImporter
+    postprocessor: PostProcessor
     engine: Engine | None = None
     nntp_providers: PostgresNntpProviderRepository | None = None
     runtime: PostgresRuntimeRepository | None = None
@@ -65,6 +67,7 @@ class AppContainer:
                 # per operation so an unconfigured provider cannot prevent boot.
                 downloader=None,
                 importer=LibraryImporter(library),
+                postprocessor=PostProcessor(),
                 engine=engine,
                 nntp_providers=PostgresNntpProviderRepository(sessions, cipher),
                 runtime=PostgresRuntimeRepository(sessions),
@@ -79,9 +82,10 @@ class AppContainer:
             jobs=JobRepository(),
             library=library,
             downloader=mock_downloader if mock_api_enabled else None,
+            importer=LibraryImporter(library),
+            postprocessor=PostProcessor(),
             mock_api_enabled=mock_api_enabled,
             mock_downloader=mock_downloader,
-            importer=LibraryImporter(library),
         )
 
     def close(self) -> None:
