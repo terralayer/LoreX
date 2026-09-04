@@ -72,3 +72,24 @@ def test_real_yenc_archive_parts_group_into_one_downloadable_release():
     assert release.title == "The Sixth Idea"
     assert release.format == "archive"
     assert repository.get_articles(release.id) == tuple(headers)
+
+
+def test_software_archive_in_audiobook_group_is_rejected():
+    repository = ReleaseRepository()
+    headers = [
+        _header(
+            "<maya-par2@example.test>",
+            'poster - [1/3] - "Autodesk Maya v2027.2 (x64) + Fix.par2" yEnc (1/1)',
+        ),
+        _header(
+            "<maya-rar@example.test>",
+            'poster - [2/3] - "Autodesk Maya v2027.2 (x64) + Fix.part1.rar" yEnc (1/1)',
+        ),
+    ]
+
+    stats = index_batches([IndexBatch(headers=headers)], repository)
+
+    assert stats.headers_received == 2
+    assert stats.releases_indexed == 0
+    assert stats.releases_rejected == 1
+    assert repository.search("") == []
