@@ -128,3 +128,59 @@ def test_secret_writes_fail_503_when_master_key_is_missing(monkeypatch):
         assert response.status_code == 503
         assert "credential" in response.json()["detail"].lower()
         assert TEST_PASSWORD not in response.text
+
+
+def test_provider_connection_test_authenticates_and_checks_configured_group(monkeypatch):
+    _reset_db()
+    monkeypatch.setenv("LOREX_CREDENTIAL_KEY", _key())
+    calls: list[tuple] = []
+
+    class FakeClient:
+        def __init__(self, host: str, port: int):
+            calls.append(("connect", host, port))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def authenticate(self, username: str, password: str) -> None:
+            calls.append(("auth", username, password))
+
+        def group(self, name: str):
+            calls.append(("group", name))
+            return object()
+
+    monkeypatch.setattr("lorex.api.nntp_settings.NntpClient", FakeClient, raising=False)
+    with TestClient(create_app()) as client:
+        provider_id = client.post("/api/settings/nntp/providers", json=_payload()).json()["id"]
+        response = client.post(f"/api/settings/nntp/providers/{provider_id}/test")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "provider_id": provider_id,
+        "group": "alt.binaries.audiobooks",
+    }
+    assert calls == [
+        ("connect", "news.example.test", 563),
+        ("auth", TEST_USERNAME, TEST_PASSWORD),
+        ("group", "alt.binaries.audiobooks"),
+    ]
+    assert TEST_PASSWORD not in response.text
+
+
+def test_provider_connection_test_fails_closed_without_master_key(monkeypatch):
+    _reset_db()
+    monkeypatch.setenv("LOREX_CREDENTIAL_KEY", _key())
+    with TestClient(create_app()) as client:
+        provider_id = client.post("/api/settings/nntp/providers", json=_payload()).json()["id"]
+
+    monkeypatch.delenv("LOREX_CREDENTIAL_KEY", raising=False)
+    with TestClient(create_app()) as client:
+        response = client.post(f"/api/settings/nntp/providers/{provider_id}/test")
+
+    assert response.status_code == 503
+    assert "credential" in response.json()["detail"].lower()
+    assert TEST_PASSWORD not in response.text
