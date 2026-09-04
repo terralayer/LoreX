@@ -4,6 +4,7 @@ import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Event, Thread
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -34,6 +35,10 @@ from lorex.security.credentials import credential_cipher_from_env
 
 def _env_enabled(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_enabled_by_default(name: str) -> bool:
+    return os.getenv(name, "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 @dataclass(slots=True)
@@ -95,13 +100,60 @@ class AppContainer:
             self.engine.dispose()
 
 
+def _start_embedded_workers(container: AppContainer, stop: Event) -> list[Thread]:
+    if (
+        container.engine is None
+        or container.nntp_providers is None
+        or container.runtime is None
+        or not _env_enabled_by_default("LOREX_EMBED_WORKERS")
+    ):
+        return []
+
+    # Lazy imports avoid a module cycle: the standalone download worker imports
+    # AppContainer from this module.
+    from lorex.postgres_repository import PostgresReleaseRepository
+    from lorex.workers.download_worker import run_forever as run_download_worker
+    from lorex.workers.nntp_scanner import run_forever as run_scanner_worker
+
+    threads: list[Thread] = []
+    if container.credential_key_available:
+        scanner_releases = PostgresReleaseRepository(session_factory(container.engine))
+        threads.append(
+            Thread(
+                target=run_scanner_worker,
+                args=(container.nntp_providers, scanner_releases, container.runtime),
+                kwargs={"mode": "live", "stop_event": stop},
+                daemon=True,
+                name="lorex-nntp-scanner",
+            )
+        )
+
+    threads.append(
+        Thread(
+            target=run_download_worker,
+            args=(container,),
+            kwargs={"stop_event": stop},
+            daemon=True,
+            name="lorex-download-worker",
+        )
+    )
+    for thread in threads:
+        thread.start()
+    return threads
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     container = AppContainer.build(database_url_from_env())
     app.state.container = container
+    stop = Event()
+    threads = _start_embedded_workers(container, stop)
     try:
         yield
     finally:
+        stop.set()
+        for thread in threads:
+            thread.join(timeout=5.0)
         container.close()
 
 
