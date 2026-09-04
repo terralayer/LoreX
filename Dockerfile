@@ -9,6 +9,8 @@ FROM python:3.12-slim-bookworm
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends par2 7zip unar ffmpeg \
+    && test -x /usr/bin/7zz \
+    && ln -s /usr/bin/7zz /usr/local/bin/7z \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md ./
 COPY alembic.ini ./alembic.ini
