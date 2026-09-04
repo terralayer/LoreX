@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +8,7 @@ from lorex.downloader.engine import DownloaderConfig, StreamingDownloader
 from lorex.downloader.provider import ProviderConfig, ProviderSet
 from lorex.nntp.article_provider import NntpArticleProvider
 from lorex.nntp.errors import NntpConfigurationError
+from lorex.nntp.models import NntpProvider
 
 
 class _NullDownloadState:
@@ -35,7 +37,11 @@ class _NullDownloadState:
         return None
 
 
-def build_provider_set(provider_repository) -> ProviderSet:
+def build_provider_set(
+    provider_repository,
+    *,
+    client_factory: Callable[[NntpProvider], object] | None = None,
+) -> ProviderSet:
     providers = list(provider_repository.list_enabled())
     if not providers:
         raise NntpConfigurationError("No enabled NNTP providers are configured")
@@ -53,7 +59,10 @@ def build_provider_set(provider_repository) -> ProviderSet:
             tls=True,
         )
         configs.append(config)
-        clients[provider.name] = NntpArticleProvider(provider)
+        clients[provider.name] = NntpArticleProvider(
+            provider,
+            client_factory=client_factory,
+        )
     return ProviderSet(configs, clients=clients)
 
 
@@ -63,8 +72,12 @@ def build_live_downloader(
     state: Any | None = None,
     root: str | Path = "/downloads",
     max_active_articles: int = 8,
+    client_factory: Callable[[NntpProvider], object] | None = None,
 ) -> StreamingDownloader:
-    providers = build_provider_set(provider_repository)
+    providers = build_provider_set(
+        provider_repository,
+        client_factory=client_factory,
+    )
     return StreamingDownloader(
         providers,
         state or _NullDownloadState(),
