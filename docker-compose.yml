@@ -17,6 +17,7 @@ services:
       LOREX_DATABASE_URL: postgresql://lorex:lorex@postgres:5432/lorex
       LOREX_REDIS_URL: redis://redis:6379/0
       LOREX_CREDENTIAL_KEY: ${LOREX_CREDENTIAL_KEY:-}
+      LOREX_EMBEDDED_WORKERS: "0"
     volumes:
       - ./data/config:/config
       - ./data/downloads:/downloads
