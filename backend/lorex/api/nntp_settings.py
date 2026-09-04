@@ -193,8 +193,10 @@ def test_provider_connection(provider_id: str, request: Request) -> ProviderTest
         raise HTTPException(status_code=422, detail="Provider username and password must be configured together")
 
     group = next((item.group_name for item in provider.groups if item.enabled), None)
+    client_factory = getattr(container, "nntp_client_factory", None)
     try:
-        with NntpClient(provider.host, provider.port) as client:
+        client_context = client_factory(provider) if client_factory is not None else NntpClient(provider.host, provider.port)
+        with client_context as client:
             if provider.username is not None and provider.password is not None:
                 client.authenticate(provider.username, provider.password)
             if group is not None:

@@ -53,3 +53,31 @@ export function apiQuery<T>(key: string, url: string, options: QueryOptions = {}
   })
   return inFlight
 }
+
+export async function apiMutation<T = unknown>(
+  url: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body?: unknown,
+): Promise<T> {
+  const response = await fetch(url, {
+    method,
+    headers: body === undefined
+      ? { Accept: 'application/json' }
+      : { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    let detail = `Request failed: ${response.status}`
+    try {
+      const payload = await response.json() as { detail?: string }
+      if (payload.detail) detail = payload.detail
+    } catch {
+      // Keep the status-only error when the response is not JSON.
+    }
+    throw new Error(detail)
+  }
+
+  if (response.status === 204) return undefined as T
+  return response.json() as Promise<T>
+}

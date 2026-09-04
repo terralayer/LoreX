@@ -292,8 +292,24 @@ class LibraryRepository:
         self._items[book.id] = book
         return book
 
+    def get(self, book_id: str) -> LibraryBook | None:
+        return self._items.get(book_id)
+
     def count(self) -> int:
         return len(self._items)
+
+    def search(self, query: str) -> list[LibraryBook]:
+        needle = query.casefold().strip()
+        values = list(self._items.values())
+        if not needle:
+            return values
+        return [
+            item
+            for item in values
+            if needle in item.title.casefold()
+            or needle in item.author.casefold()
+            or (item.narrator and needle in item.narrator.casefold())
+        ]
 
     def search_page(self, query: LibrarySearchQuery) -> LibraryPage:
         needle = query.q.casefold().strip()

@@ -1,20 +1,21 @@
 import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from 'react'
 
 const HomePage = lazy(() => import('./routes/HomePage'))
-const LibraryPage = lazy(() => import('./routes/LibraryPage'))
 const SearchPage = lazy(() => import('./routes/SearchPage'))
+const DownloadsPage = lazy(() => import('./routes/DownloadsPage'))
+const LibraryPage = lazy(() => import('./routes/LibraryPage'))
+const IndexerPage = lazy(() => import('./routes/IndexerPage'))
+const ActivityPage = lazy(() => import('./routes/ActivityPage'))
+const SettingsPage = lazy(() => import('./routes/SettingsPage'))
 
 const nav = [
-  { label: 'Home', route: '/' },
-  { label: 'Wanted' },
-  { label: 'Downloads' },
-  { label: 'Library', route: '/library' },
-  { label: 'Authors' },
-  { label: 'Series' },
-  { label: 'Narrators' },
-  { label: 'Indexer' },
-  { label: 'Activity' },
-  { label: 'Settings' },
+  { label: 'Home', route: '/', icon: '⌂' },
+  { label: 'Search', route: '/search', icon: '⌕' },
+  { label: 'Downloads', route: '/downloads', icon: '↓' },
+  { label: 'Library', route: '/library', icon: '▣' },
+  { label: 'Indexer', route: '/indexer', icon: '⌁' },
+  { label: 'Activity', route: '/activity', icon: '◷' },
+  { label: 'Settings', route: '/settings', icon: '⚙' },
 ]
 
 type Route = { path: string; query: URLSearchParams }
@@ -48,10 +49,14 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  const activeRoute = route.path === '/search' ? '/search' : route.path
+  const activeRoute = route.path
   const content = useMemo(() => {
-    if (route.path === '/library') return <LibraryPage />
     if (route.path === '/search') return <SearchPage initialQuery={route.query.get('q') ?? ''} />
+    if (route.path === '/downloads') return <DownloadsPage />
+    if (route.path === '/library') return <LibraryPage />
+    if (route.path === '/indexer') return <IndexerPage />
+    if (route.path === '/activity') return <ActivityPage />
+    if (route.path === '/settings') return <SettingsPage />
     return <HomePage />
   }, [route])
 
@@ -67,25 +72,16 @@ export default function App() {
       <aside className="sidebar">
         <Logo />
         <nav>
-          {nav.map((item, index) => (
-            <button
-              key={item.label}
-              className={item.route && activeRoute === item.route ? 'active' : ''}
-              disabled={!item.route}
-              onClick={() => { if (item.route) window.location.hash = item.route }}
-            >
-              <span className="nav-dot">{index === 0 ? '⌂' : '·'}</span>{item.label}
-              {item.label === 'Wanted' && <em>17</em>}
+          {nav.map((item) => (
+            <button key={item.label} className={activeRoute === item.route ? 'active' : ''} onClick={() => { window.location.hash = item.route }}>
+              <span className="nav-dot">{item.icon}</span>{item.label}
             </button>
           ))}
         </nav>
         <div className="system">
-          <h4>System</h4>
-          <p><span>Indexer</span><b className="ok">● Running</b></p>
-          <p><span>API reads</span><b className="ok">● Bounded</b></p>
-          <p><span>Search</span><b>&lt;150ms target</b></p>
-          <div className="mini-progress"><i /></div>
-          <p><span>Metadata cache</span><b className="ok">Coalesced</b></p>
+          <h4>LoreX</h4>
+          <p><span>Mode</span><b>Live data only</b></p>
+          <p><span>Version</span><b>0.1.1 alpha</b></p>
         </div>
         <div className="sidebar-foot">Light <span>v0.1.1 alpha</span></div>
       </aside>
@@ -94,10 +90,10 @@ export default function App() {
         <header>
           <button className="menu" onClick={() => setSidebarOpen((value) => !value)} aria-label="Toggle navigation">☰</button>
           <form className="search search-form" onSubmit={submitSearch}>
-            <input value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} placeholder="Search books, authors, series, or narrators…" aria-label="Global search" />
+            <input value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} placeholder="Search indexed audiobooks…" aria-label="Global search" />
             <button aria-label="Search">⌕</button>
           </form>
-          <div className="header-right"><span>⌁ Activity</span><span className="bell">♧<i>3</i></span><span className="avatar">TU</span></div>
+          <div className="header-right"><span>0.1.1 alpha</span></div>
         </header>
         <Suspense fallback={<div className="route-loading">Loading view…</div>}>{content}</Suspense>
       </main>

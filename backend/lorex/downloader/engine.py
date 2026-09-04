@@ -14,6 +14,10 @@ from lorex.downloader.progress import ProgressCoalescer
 from lorex.downloader.provider import ArticleUnavailable, ProviderSet, ProviderTemporaryError
 
 
+class DownloadCancelled(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class DownloaderConfig:
     download_root: Path
@@ -52,6 +56,15 @@ class StreamingDownloader:
         self.config = config
         self._article_slots = BoundedSemaphore(config.max_active_articles)
 
+    @staticmethod
+    def _article_complete_path(job_dir: Path, message_id: str) -> Path:
+        article_key = sha1(message_id.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+        return job_dir / f"article-{article_key}.part.complete"
+
+    def _cancel_requested(self, job_id: str) -> bool:
+        checker = getattr(self.state, "is_cancel_requested", None)
+        return bool(checker(job_id)) if checker is not None else False
+
     def download_job(
         self,
         job: DownloadJob,
@@ -61,7 +74,17 @@ class StreamingDownloader:
         job_dir = self.config.download_root / job.id
         job_dir.mkdir(parents=True, exist_ok=True)
         materialized_articles = tuple(articles)
-        pending = iter(self.state.pending_articles(job.id, materialized_articles))
+        state_pending = {
+            article.message_id
+            for article in self.state.pending_articles(job.id, materialized_articles)
+        }
+        pending_articles = [
+            article
+            for article in materialized_articles
+            if article.message_id in state_pending
+            or not self._article_complete_path(job_dir, article.message_id).is_file()
+        ]
+        pending = iter(pending_articles)
         total_bytes = sum(article.bytes for article in materialized_articles)
         coalescer = ProgressCoalescer(
             self.config.progress_byte_threshold,
@@ -69,6 +92,11 @@ class StreamingDownloader:
         )
         sink = _JobProgressSink(self.state, job.id)
         progress_lock = Lock()
+        output_paths: dict[str, str] = {
+            article.message_id: str(self._article_complete_path(job_dir, article.message_id))
+            for article in materialized_articles
+            if self._article_complete_path(job_dir, article.message_id).is_file()
+        }
 
         def record_progress(byte_count: int) -> None:
             with progress_lock:
@@ -81,22 +109,23 @@ class StreamingDownloader:
 
         try:
             with ThreadPoolExecutor(max_workers=self.config.max_active_articles) as executor:
-                active: set[Future[tuple[int, str]]] = set()
+                active: dict[Future[tuple[int, str, str]], ArticleHeader] = {}
 
                 def submit_next() -> bool:
+                    if self._cancel_requested(job.id):
+                        raise DownloadCancelled("Download cancellation requested")
                     try:
                         article = next(pending)
                     except StopIteration:
                         return False
-                    active.add(
-                        executor.submit(
-                            self._download_article,
-                            job,
-                            article,
-                            job_dir,
-                            record_progress,
-                        )
+                    future = executor.submit(
+                        self._download_article,
+                        job,
+                        article,
+                        job_dir,
+                        record_progress,
                     )
+                    active[future] = article
                     return True
 
                 for _ in range(self.config.max_active_articles):
@@ -106,17 +135,21 @@ class StreamingDownloader:
                 while active:
                     done, _ = wait(tuple(active), return_when=FIRST_COMPLETED)
                     for future in done:
-                        active.remove(future)
-                        future.result()
+                        article = active.pop(future)
+                        _byte_count, _provider, complete_path = future.result()
+                        output_paths[article.message_id] = complete_path
                         submit_next()
-
-            flush_progress()
-            self.state.mark_completed(job.id)
-        except Exception:
-            flush_progress()
-            self.state.mark_failed(job.id)
+        except DownloadCancelled:
             raise
+        except Exception:
+            mark_failed = getattr(self.state, "mark_failed", None)
+            if mark_failed is not None:
+                mark_failed(job.id)
+            raise
+        finally:
+            flush_progress()
 
+        ordered_paths = tuple(output_paths[article.message_id] for article in materialized_articles)
         return DownloadResult(
             release_id=release.id,
             title=release.title,
@@ -125,6 +158,9 @@ class StreamingDownloader:
             format=release.format,
             file_name=f"{release.title}.{release.format}",
             size=total_bytes,
+            staging_dir=str(job_dir),
+            article_paths=ordered_paths,
+            article_subjects=tuple(article.subject for article in materialized_articles),
         )
 
     def _download_article(
@@ -133,14 +169,16 @@ class StreamingDownloader:
         article: ArticleHeader,
         job_dir: Path,
         record_progress: Callable[[int], None],
-    ) -> tuple[int, str]:
+    ) -> tuple[int, str, str]:
         article_key = sha1(article.message_id.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
         partial = job_dir / f"article-{article_key}.partial"
-        complete = job_dir / f"article-{article_key}.part.complete"
+        complete = self._article_complete_path(job_dir, article.message_id)
         last_error: Exception | None = None
 
         with self._article_slots:
             for attempt_index, config in enumerate(self.providers.ordered()):
+                if self._cancel_requested(job.id):
+                    raise DownloadCancelled("Download cancellation requested")
                 try:
                     pool = self.providers.pool_for(config.name)
                 except RuntimeError:
@@ -153,6 +191,8 @@ class StreamingDownloader:
                 try:
                     with partial.open("wb") as handle:
                         for chunk in pool.stream_article(article.message_id):
+                            if self._cancel_requested(job.id):
+                                raise DownloadCancelled("Download cancellation requested")
                             if not isinstance(chunk, (bytes, bytearray, memoryview)):
                                 raise TypeError("provider chunks must be bytes-like")
                             handle.write(chunk)
@@ -173,7 +213,10 @@ class StreamingDownloader:
                         byte_count=byte_count,
                         elapsed_ms=(monotonic() - started) * 1000.0,
                     )
-                    return byte_count, config.name
+                    return byte_count, config.name, str(complete)
+                except DownloadCancelled:
+                    partial.unlink(missing_ok=True)
+                    raise
                 except (ArticleUnavailable, ProviderTemporaryError) as exc:
                     last_error = exc
                     partial.unlink(missing_ok=True)

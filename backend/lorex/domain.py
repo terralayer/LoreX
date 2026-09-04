@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from hashlib import sha1
 
 
@@ -55,6 +56,23 @@ class DownloadJob:
 
 
 @dataclass(frozen=True, slots=True)
+class DownloadJobView:
+    id: str
+    release_id: str
+    status: str
+    bytes_completed: int
+    articles_completed: int
+    total_articles: int
+    error: str | None
+    cancel_requested: bool
+    completed_at: datetime | None
+    updated_at: datetime
+    title: str | None = None
+    author: str | None = None
+    release_size: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ImportJob:
     id: str
     release_id: str
@@ -95,6 +113,9 @@ class DownloadResult:
     format: str
     file_name: str
     size: int
+    staging_dir: str | None = None
+    article_paths: tuple[str, ...] = ()
+    article_subjects: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

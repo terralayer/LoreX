@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,20 +10,30 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy import Engine
 
+from lorex.api.activity import router as activity_router
+from lorex.api.downloads import router as downloads_router
+from lorex.api.indexer import router as indexer_router
 from lorex.api.library import router as library_router
 from lorex.api.nntp_settings import router as nntp_settings_router
 from lorex.api.releases import router as releases_router
+from lorex.api.system import router as system_router
 from lorex.db import create_engine_from_url, database_url_from_env, session_factory
 from lorex.downloader.mock import MockDownloader
 from lorex.library.importer import LibraryImporter
 from lorex.nntp.repository import PostgresNntpProviderRepository
+from lorex.postprocess import PostProcessor
 from lorex.read_repository import (
     ResponsivePostgresJobRepository,
     ResponsivePostgresLibraryRepository,
     ResponsivePostgresReleaseRepository,
 )
 from lorex.repository import JobRepository, LibraryRepository, ReleaseRepository
+from lorex.runtime_repository import PostgresRuntimeRepository
 from lorex.security.credentials import credential_cipher_from_env
+
+
+def _env_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(slots=True)
@@ -32,14 +43,20 @@ class AppContainer:
     library: Any
     downloader: Any
     importer: LibraryImporter
+    postprocessor: PostProcessor
     engine: Engine | None = None
     nntp_providers: PostgresNntpProviderRepository | None = None
+    runtime: PostgresRuntimeRepository | None = None
     credential_key_available: bool = False
+    mock_api_enabled: bool = False
+    nntp_client_factory: Any | None = None
+    download_root: str = "/downloads"
     mock_downloader: MockDownloader = field(default_factory=MockDownloader)
     mock_release_ids: set[str] = field(default_factory=set)
 
     @classmethod
     def build(cls, database_url: str | None = None) -> "AppContainer":
+        mock_api_enabled = _env_enabled("LOREX_ENABLE_MOCK_API")
         if database_url:
             engine = create_engine_from_url(database_url)
             sessions = session_factory(engine)
@@ -50,13 +67,14 @@ class AppContainer:
                 releases=ResponsivePostgresReleaseRepository(sessions),
                 jobs=jobs,
                 library=library,
-                # Production PostgreSQL mode builds the live NNTP downloader lazily
-                # per operation so an unconfigured provider cannot prevent boot.
                 downloader=None,
                 importer=LibraryImporter(library),
+                postprocessor=PostProcessor(),
                 engine=engine,
                 nntp_providers=PostgresNntpProviderRepository(sessions, cipher),
+                runtime=PostgresRuntimeRepository(sessions),
                 credential_key_available=cipher is not None,
+                mock_api_enabled=mock_api_enabled,
             )
 
         library = LibraryRepository()
@@ -65,9 +83,11 @@ class AppContainer:
             releases=ReleaseRepository(),
             jobs=JobRepository(),
             library=library,
-            downloader=mock_downloader,
-            mock_downloader=mock_downloader,
+            downloader=mock_downloader if mock_api_enabled else None,
             importer=LibraryImporter(library),
+            postprocessor=PostProcessor(),
+            mock_api_enabled=mock_api_enabled,
+            mock_downloader=mock_downloader,
         )
 
     def close(self) -> None:
@@ -95,6 +115,10 @@ def create_app() -> FastAPI:
     application.include_router(releases_router)
     application.include_router(library_router)
     application.include_router(nntp_settings_router)
+    application.include_router(indexer_router)
+    application.include_router(downloads_router)
+    application.include_router(activity_router)
+    application.include_router(system_router)
 
     frontend_dist = Path("frontend-dist")
     frontend_index = frontend_dist / "index.html"

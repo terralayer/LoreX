@@ -25,6 +25,7 @@ class MemoryState:
     def __init__(self) -> None:
         self.completed: set[str] = set()
         self.job_status: dict[str, str] = {}
+        self.cancel_requested = False
 
     def pending_articles(self, job_id: str, articles):
         return [article for article in articles if article.message_id not in self.completed]
@@ -43,6 +44,9 @@ class MemoryState:
 
     def mark_failed(self, job_id: str) -> None:
         self.job_status[job_id] = "failed"
+
+    def is_cancel_requested(self, job_id: str) -> bool:
+        return self.cancel_requested
 
     def persist_progress(self, byte_count: int) -> None:
         return None
@@ -67,7 +71,7 @@ def _article_part_name(message_id: str) -> str:
     return f"article-{key}.part.complete"
 
 
-def test_downloader_streams_article_to_disk_and_marks_job_complete(tmp_path: Path) -> None:
+def test_downloader_streams_article_to_disk_without_finalizing_whole_job(tmp_path: Path) -> None:
     provider = RepeatingChunkProvider(chunks=16)
     state = MemoryState()
     providers = ProviderSet(
@@ -83,29 +87,37 @@ def test_downloader_streams_article_to_disk_and_marks_job_complete(tmp_path: Pat
 
     result = downloader.download_job(DownloadJob("job-1", "release-1"), _release(), [article])
 
+    expected = tmp_path / "job-1" / _article_part_name(article.message_id)
     assert result.size == 16 * 65536
     assert state.completed == {"<article-1>"}
-    assert state.job_status["job-1"] == "completed"
+    assert "job-1" not in state.job_status
     assert provider.max_materialized_chunks == 1
-    assert (tmp_path / "job-1" / _article_part_name(article.message_id)).stat().st_size == 16 * 65536
+    assert expected.stat().st_size == 16 * 65536
+    assert result.staging_dir == str(tmp_path / "job-1")
+    assert result.article_paths == (str(expected),)
 
 
-def test_article_part_name_depends_on_message_id_not_pending_order(tmp_path: Path) -> None:
+def test_article_paths_preserve_release_article_order_with_concurrent_downloads(tmp_path: Path) -> None:
     provider = RepeatingChunkProvider(chunks=1)
     state = MemoryState()
     providers = ProviderSet(
         [ProviderConfig("primary", "primary.example")],
         clients={"primary": provider},
     )
-    downloader = StreamingDownloader(providers, state, DownloaderConfig(download_root=tmp_path))
-    article = ArticleHeader("<article-2>", "subject", 65536)
+    downloader = StreamingDownloader(providers, state, DownloaderConfig(download_root=tmp_path, max_active_articles=2))
+    articles = [
+        ArticleHeader("<article-2>", "subject [2/2]", 65536),
+        ArticleHeader("<article-1>", "subject [1/2]", 65536),
+    ]
 
-    downloader.download_job(DownloadJob("job-1", "release-1"), _release(), [article])
+    result = downloader.download_job(DownloadJob("job-1", "release-1"), _release(), articles)
 
-    assert (tmp_path / "job-1" / _article_part_name(article.message_id)).is_file()
+    assert result.article_paths == tuple(
+        str(tmp_path / "job-1" / _article_part_name(article.message_id)) for article in articles
+    )
 
 
-def test_downloader_skips_completed_articles_on_resume_but_reports_full_release_bytes(tmp_path: Path) -> None:
+def test_downloader_redownloads_completed_state_when_staging_file_is_missing(tmp_path: Path) -> None:
     provider = RepeatingChunkProvider(chunks=1)
     state = MemoryState()
     state.completed.add("<article-1>")
@@ -118,4 +130,6 @@ def test_downloader_skips_completed_articles_on_resume_but_reports_full_release_
 
     result = downloader.download_job(DownloadJob("job-1", "release-1"), _release(), [article])
 
-    assert result.size == 65536
+    expected = tmp_path / "job-1" / _article_part_name(article.message_id)
+    assert expected.is_file()
+    assert result.article_paths == (str(expected),)
