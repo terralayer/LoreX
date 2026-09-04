@@ -63,11 +63,12 @@ def dashboard_summary(request: Request) -> DashboardSummaryResponse:
 @router.get("/api/dashboard", response_model=AppDashboardResponse)
 def app_dashboard(request: Request) -> AppDashboardResponse:
     container = request.app.state.container
-    release_summary = container.releases.dashboard_summary()
+    count_releases = getattr(container.releases, "count", None)
+    total_releases = count_releases() if count_releases is not None else container.releases.dashboard_summary().total_releases
     job_counts = container.jobs.status_counts()
     return AppDashboardResponse(
         library_books=container.library.count(),
-        total_releases=release_summary.total_releases,
+        total_releases=total_releases,
         active_downloads=job_counts.get("downloading", 0),
         queued_downloads=job_counts.get("queued", 0),
     )
