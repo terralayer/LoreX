@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy import Engine
 
 from lorex.api.library import router as library_router
@@ -93,6 +95,22 @@ def create_app() -> FastAPI:
     application.include_router(releases_router)
     application.include_router(library_router)
     application.include_router(nntp_settings_router)
+
+    frontend_dist = Path("frontend-dist")
+    frontend_index = frontend_dist / "index.html"
+    if frontend_index.is_file():
+        frontend_root = frontend_dist.resolve()
+
+        @application.get("/{frontend_path:path}", include_in_schema=False)
+        def serve_frontend(frontend_path: str):
+            if frontend_path == "api" or frontend_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="Not Found")
+
+            requested = (frontend_dist / frontend_path).resolve()
+            if requested.is_relative_to(frontend_root) and requested.is_file():
+                return FileResponse(requested)
+            return FileResponse(frontend_index)
+
     return application
 
 
