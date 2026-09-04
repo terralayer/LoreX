@@ -200,13 +200,18 @@ def test_provider_connection(provider_id: str, request: Request) -> ProviderTest
             if provider.username is not None and provider.password is not None:
                 client.authenticate(provider.username, provider.password)
             if group is not None:
-                client.group(group)
+                group_info = client.group(group)
+                if group_info.count > 0 and group_info.high >= group_info.low:
+                    # Force one real overview response through the same XOVER/OVER
+                    # path the scanner uses. Login + GROUP alone is not enough to
+                    # prove that a provider can actually be indexed.
+                    tuple(client.xover(group_info.high, group_info.high))
     except NntpAuthenticationError as exc:
         raise HTTPException(status_code=401, detail="NNTP provider authentication failed") from exc
     except NntpTemporaryError as exc:
-        raise HTTPException(status_code=503, detail="NNTP provider is temporarily unavailable") from exc
+        raise HTTPException(status_code=503, detail="NNTP provider is temporarily unavailable during scanner test") from exc
     except NntpError as exc:
-        raise HTTPException(status_code=502, detail="NNTP provider protocol test failed") from exc
+        raise HTTPException(status_code=502, detail="NNTP provider scanner protocol test failed") from exc
     except OSError as exc:
         raise HTTPException(status_code=503, detail="NNTP provider connection failed") from exc
 
