@@ -9,9 +9,23 @@ from benchmarks.run_live_nntp import _markdown, enforce_gates
 
 def _sample_report() -> dict:
     return {
-        "overview": {"rows": 10_000, "peak_python_mb": 4.0, "elapsed_ms": 20.0},
-        "body": {"bytes": 64 * 1024 * 1024, "peak_python_mb": 2.0, "throughput_mib_s": 200.0},
-        "provider_concurrency": {"configured_max": 4, "observed_max": 4},
+        "overview": {
+            "rows": 10_000,
+            "peak_python_mb": 4.0,
+            "elapsed_ms": 20.0,
+            "rows_per_second": 500_000.0,
+        },
+        "body": {
+            "bytes": 64 * 1024 * 1024,
+            "peak_python_mb": 2.0,
+            "elapsed_ms": 320.0,
+            "throughput_mib_s": 200.0,
+        },
+        "provider_concurrency": {
+            "configured_max": 4,
+            "observed_max": 4,
+            "requests": 24,
+        },
     }
 
 
