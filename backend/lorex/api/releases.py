@@ -64,6 +64,8 @@ class ReleaseDetailResponse(BaseModel):
 @router.post("/index/mock")
 def mock_index(payload: MockIndexRequest, request: Request) -> dict:
     container = request.app.state.container
+    if not getattr(container, "mock_api_enabled", False):
+        raise HTTPException(status_code=404, detail="Not Found")
     headers = [ArticleHeader(**item.model_dump()) for item in payload.headers]
     releases = index_headers(headers, container.releases)
     container.mock_release_ids.update(release.id for release in releases)
@@ -137,7 +139,7 @@ def process_next_download(request: Request) -> dict:
         container.jobs.mark_failed(job.id)
         raise HTTPException(status_code=409, detail="Queued release no longer exists")
     try:
-        if release.id in container.mock_release_ids:
+        if release.id in container.mock_release_ids and container.mock_api_enabled:
             result = container.mock_downloader.download(release)
         elif container.downloader is not None:
             result = container.downloader.download(release)
