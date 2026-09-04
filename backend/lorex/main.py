@@ -32,6 +32,7 @@ class AppContainer:
     importer: LibraryImporter
     engine: Engine | None = None
     nntp_providers: PostgresNntpProviderRepository | None = None
+    credential_key_available: bool = False
 
     @classmethod
     def build(cls, database_url: str | None = None) -> "AppContainer":
@@ -39,17 +40,19 @@ class AppContainer:
             engine = create_engine_from_url(database_url)
             sessions = session_factory(engine)
             library = ResponsivePostgresLibraryRepository(sessions)
+            jobs = ResponsivePostgresJobRepository(sessions)
+            cipher = credential_cipher_from_env()
             return cls(
                 releases=ResponsivePostgresReleaseRepository(sessions),
-                jobs=ResponsivePostgresJobRepository(sessions),
+                jobs=jobs,
                 library=library,
-                downloader=MockDownloader(),
+                # Production PostgreSQL mode builds the live NNTP downloader lazily
+                # per operation so an unconfigured provider cannot prevent boot.
+                downloader=None,
                 importer=LibraryImporter(library),
                 engine=engine,
-                nntp_providers=PostgresNntpProviderRepository(
-                    sessions,
-                    credential_cipher_from_env(),
-                ),
+                nntp_providers=PostgresNntpProviderRepository(sessions, cipher),
+                credential_key_available=cipher is not None,
             )
 
         library = LibraryRepository()
