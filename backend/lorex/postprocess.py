@@ -135,9 +135,6 @@ class PostProcessor:
             else:
                 grouped.setdefault(name, []).append(path)
 
-        # No usable filenames usually means a direct multipart payload. Preserve
-        # release article order and assemble it using the indexed audio format only
-        # when the subjects do not explicitly name some unsupported file type.
         if unnamed:
             if grouped:
                 for index, path in enumerate(unnamed, 1):
@@ -162,7 +159,6 @@ class PostProcessor:
             destination = reconstructed / _safe_name(name)
             reconstructed_paths.append(_copy_join(parts, destination))
 
-        # Correct a generic/incorrect extension when binary magic is authoritative.
         normalized_paths: list[Path] = []
         for index, path in enumerate(reconstructed_paths, 1):
             detected = _magic_extension(path)
@@ -181,10 +177,20 @@ class PostProcessor:
         audio_roots = [reconstructed]
         if archives:
             extracted.mkdir(parents=True, exist_ok=True)
-            # Extract one primary archive set. 7z follows associated volumes when
-            # the reconstructed filenames identify them.
             primary = self._primary_archive(archives)
-            self._run(["7z", "x", "-y", f"-o{extracted}", str(primary)], reconstructed)
+            if primary.suffix.lower() == ".rar":
+                self._run(
+                    [
+                        "unar",
+                        "-force-overwrite",
+                        "-output-directory",
+                        str(extracted),
+                        str(primary),
+                    ],
+                    reconstructed,
+                )
+            else:
+                self._run(["7z", "x", "-y", f"-o{extracted}", str(primary)], reconstructed)
             audio_roots.insert(0, extracted)
 
         audio_files = self._audio_files(audio_roots)
@@ -228,10 +234,14 @@ class PostProcessor:
         for root in roots:
             if not root.exists():
                 continue
+            resolved_root = root.resolve()
             for path in root.rglob("*"):
-                if path.is_file() and path.suffix.lower() in _AUDIO_EXTENSIONS:
-                    resolved = path.resolve()
-                    if resolved not in seen:
-                        seen.add(resolved)
-                        files.append(resolved)
+                if not path.is_file() or path.suffix.lower() not in _AUDIO_EXTENSIONS:
+                    continue
+                resolved = path.resolve()
+                if not resolved.is_relative_to(resolved_root):
+                    continue
+                if resolved not in seen:
+                    seen.add(resolved)
+                    files.append(resolved)
         return files
