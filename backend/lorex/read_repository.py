@@ -3,9 +3,19 @@ from __future__ import annotations
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from lorex.db_models import DownloadJobRow, LibraryBookRow
-from lorex.postgres_repository import PostgresJobRepository, PostgresLibraryRepository
+from lorex.db_models import DownloadJobRow, LibraryBookRow, ReleaseRow
+from lorex.postgres_repository import PostgresJobRepository, PostgresLibraryRepository, PostgresReleaseRepository
 from lorex.search import LibraryPage, LibrarySearchQuery, LibrarySummary
+
+
+class ResponsivePostgresReleaseRepository(PostgresReleaseRepository):
+    def __init__(self, sessions: sessionmaker[Session]) -> None:
+        super().__init__(sessions)
+        self._ui_sessions = sessions
+
+    def count(self) -> int:
+        with self._ui_sessions() as session:
+            return int(session.scalar(select(func.count()).select_from(ReleaseRow)) or 0)
 
 
 class ResponsivePostgresLibraryRepository(PostgresLibraryRepository):
