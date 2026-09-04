@@ -29,8 +29,9 @@ def run_pass(
     runtime_repository=None,
     *,
     mode: str = "live",
-    scan_fn: Callable = scan_provider_group_once,
+    scan_fn: Callable | None = None,
 ) -> int:
+    scanner = scan_fn or scan_provider_group_once
     successes = 0
     for provider in provider_repository.list_enabled():
         for group in provider.groups:
@@ -39,7 +40,7 @@ def run_pass(
             if runtime_repository is not None:
                 runtime_repository.mark_scan_started(provider.id, group.group_name)
             try:
-                stats = scan_fn(provider, group, release_repository, mode=mode)
+                stats = scanner(provider, group, release_repository, mode=mode)
             except Exception as exc:
                 safe_error = _safe_error(provider, exc)
                 if runtime_repository is not None:
