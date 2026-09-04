@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy import Engine
 
+from lorex.api.activity import router as activity_router
 from lorex.api.downloads import router as downloads_router
 from lorex.api.indexer import router as indexer_router
 from lorex.api.library import router as library_router
@@ -63,8 +64,6 @@ class AppContainer:
                 releases=ResponsivePostgresReleaseRepository(sessions),
                 jobs=jobs,
                 library=library,
-                # Production PostgreSQL mode builds the live NNTP downloader lazily
-                # per operation so an unconfigured provider cannot prevent boot.
                 downloader=None,
                 importer=LibraryImporter(library),
                 postprocessor=PostProcessor(),
@@ -115,6 +114,7 @@ def create_app() -> FastAPI:
     application.include_router(nntp_settings_router)
     application.include_router(indexer_router)
     application.include_router(downloads_router)
+    application.include_router(activity_router)
 
     frontend_dist = Path("frontend-dist")
     frontend_index = frontend_dist / "index.html"
