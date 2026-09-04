@@ -16,6 +16,7 @@ from lorex.api.indexer import router as indexer_router
 from lorex.api.library import router as library_router
 from lorex.api.nntp_settings import router as nntp_settings_router
 from lorex.api.releases import router as releases_router
+from lorex.api.system import router as system_router
 from lorex.db import create_engine_from_url, database_url_from_env, session_factory
 from lorex.downloader.mock import MockDownloader
 from lorex.library.importer import LibraryImporter
@@ -115,6 +116,7 @@ def create_app() -> FastAPI:
     application.include_router(indexer_router)
     application.include_router(downloads_router)
     application.include_router(activity_router)
+    application.include_router(system_router)
 
     frontend_dist = Path("frontend-dist")
     frontend_index = frontend_dist / "index.html"
