@@ -14,7 +14,15 @@ from lorex.domain import (
     LibraryBook,
     ProviderHealthSnapshot,
 )
-from lorex.search import DashboardSummary, ReleaseSearchPage, ReleaseSearchQuery, ReleaseSummary
+from lorex.search import (
+    DashboardSummary,
+    LibraryPage,
+    LibrarySearchQuery,
+    LibrarySummary,
+    ReleaseSearchPage,
+    ReleaseSearchQuery,
+    ReleaseSummary,
+)
 
 
 @dataclass(slots=True)
@@ -171,6 +179,12 @@ class JobRepository:
         job = self._jobs[job_id]
         self._jobs[job_id] = replace(job, status="failed")
 
+    def status_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for job in self._jobs.values():
+            counts[job.status] = counts.get(job.status, 0) + 1
+        return counts
+
     def recover_stale(self, stale_before: datetime) -> int:
         recovered = 0
         for job_id, claimed_at in list(self._claimed_at.items()):
@@ -241,7 +255,6 @@ class JobRepository:
         )
 
     def persist_progress(self, byte_count: int) -> None:
-        # Compatibility sink for standalone ProgressCoalescer/streaming tests.
         return None
 
     def progress(self, job_id: str) -> tuple[int, int]:
@@ -278,6 +291,47 @@ class LibraryRepository:
     def add(self, book: LibraryBook) -> LibraryBook:
         self._items[book.id] = book
         return book
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def search_page(self, query: LibrarySearchQuery) -> LibraryPage:
+        needle = query.q.casefold().strip()
+        values = list(self._items.values())
+        if needle:
+            values = [
+                item
+                for item in values
+                if needle in item.title.casefold()
+                or needle in item.author.casefold()
+                or (item.narrator and needle in item.narrator.casefold())
+            ]
+        sort_keys = {
+            "title": lambda item: item.title.casefold(),
+            "author": lambda item: item.author.casefold(),
+            "narrator": lambda item: (item.narrator or "").casefold(),
+            "format": lambda item: item.format,
+            "size": lambda item: item.size,
+        }
+        values.sort(key=lambda item: (sort_keys[query.sort](item), item.id), reverse=query.order == "desc")
+        total = len(values)
+        page = values[query.offset : query.offset + query.limit]
+        return LibraryPage(
+            total=total,
+            limit=query.limit,
+            offset=query.offset,
+            results=tuple(
+                LibrarySummary(
+                    id=item.id,
+                    title=item.title,
+                    author=item.author,
+                    narrator=item.narrator,
+                    format=item.format,
+                    size=item.size,
+                )
+                for item in page
+            ),
+        )
 
     def all(self) -> list[LibraryBook]:
         return sorted(self._items.values(), key=lambda item: (item.author.casefold(), item.title.casefold()))
