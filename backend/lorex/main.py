@@ -8,16 +8,19 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 
 from lorex.api.library import router as library_router
+from lorex.api.nntp_settings import router as nntp_settings_router
 from lorex.api.releases import router as releases_router
 from lorex.db import create_engine_from_url, database_url_from_env, session_factory
 from lorex.downloader.mock import MockDownloader
 from lorex.library.importer import LibraryImporter
+from lorex.nntp.repository import PostgresNntpProviderRepository
 from lorex.read_repository import (
     ResponsivePostgresJobRepository,
     ResponsivePostgresLibraryRepository,
     ResponsivePostgresReleaseRepository,
 )
 from lorex.repository import JobRepository, LibraryRepository, ReleaseRepository
+from lorex.security.credentials import credential_cipher_from_env
 
 
 @dataclass(slots=True)
@@ -25,9 +28,10 @@ class AppContainer:
     releases: Any
     jobs: Any
     library: Any
-    downloader: MockDownloader
+    downloader: Any
     importer: LibraryImporter
     engine: Engine | None = None
+    nntp_providers: PostgresNntpProviderRepository | None = None
 
     @classmethod
     def build(cls, database_url: str | None = None) -> "AppContainer":
@@ -42,6 +46,10 @@ class AppContainer:
                 downloader=MockDownloader(),
                 importer=LibraryImporter(library),
                 engine=engine,
+                nntp_providers=PostgresNntpProviderRepository(
+                    sessions,
+                    credential_cipher_from_env(),
+                ),
             )
 
         library = LibraryRepository()
@@ -77,6 +85,7 @@ def create_app() -> FastAPI:
 
     application.include_router(releases_router)
     application.include_router(library_router)
+    application.include_router(nntp_settings_router)
     return application
 
 
