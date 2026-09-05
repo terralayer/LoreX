@@ -8,9 +8,16 @@ from pydantic import BaseModel
 
 from lorex.domain import ArticleHeader
 from lorex.indexer.nzb import get_or_build_nzb
+from lorex.nntp.errors import NntpError
 from lorex.services.download_jobs import process_next_download as process_download_job
 from lorex.services.download_jobs import queue_release
 from lorex.services.indexing import index_headers
+from lorex.services.on_demand_search import (
+    BookSearchRequest,
+    SearchCandidate,
+    execute_on_demand_search,
+)
+from lorex.services.targeted_nntp_search import TargetedAcquisitionStats, acquire_requested_book
 from lorex.search import DownloadStatus, ImportStatus, ReleaseFormat, ReleaseSearchQuery, ReleaseSort, SortOrder
 
 router = APIRouter(prefix="/api", tags=["releases"])
@@ -59,6 +66,18 @@ class ReleaseDetailResponse(BaseModel):
     source_subject: str
 
 
+class OnDemandSearchRequest(BaseModel):
+    title: str
+    author: str | None = None
+    narrator: str | None = None
+    series: str | None = None
+    series_number: str | int | None = None
+    isbn: str | None = None
+    asin: str | None = None
+    stop_score: int = 95
+    max_scan_windows: int = 8
+
+
 @router.post("/index/mock")
 def mock_index(payload: MockIndexRequest, request: Request) -> dict:
     container = request.app.state.container
@@ -96,6 +115,90 @@ def search_releases(
         )
     )
     return ReleaseSearchResponse(**asdict(page))
+
+
+@router.post("/search/on-demand")
+def on_demand_search(payload: OnDemandSearchRequest, request: Request) -> dict:
+    container = request.app.state.container
+    if not 1 <= payload.max_scan_windows <= 200:
+        raise HTTPException(status_code=422, detail="max_scan_windows must be between 1 and 200")
+
+    book = BookSearchRequest(
+        title=payload.title,
+        author=payload.author,
+        narrator=payload.narrator,
+        series=payload.series,
+        series_number=payload.series_number,
+        isbn=payload.isbn,
+        asin=payload.asin,
+    )
+
+    def search_local():
+        def provider(query: str):
+            page = container.releases.search_page(
+                ReleaseSearchQuery(q=query, limit=100, offset=0, sort="completion", order="desc")
+            )
+            candidates: list[SearchCandidate] = []
+            for summary in page.results:
+                release = container.releases.get(summary.id)
+                if release is None:
+                    continue
+                candidates.append(
+                    SearchCandidate(
+                        id=release.id,
+                        title=release.title,
+                        author=release.author,
+                        narrator=release.narrator,
+                        format=release.format,
+                        size=release.size,
+                        completion=release.completion,
+                        source_subject=release.source_subject,
+                    )
+                )
+            return candidates
+
+        return execute_on_demand_search(book, provider, stop_score=payload.stop_score)
+
+    try:
+        result = search_local()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    acquisition = TargetedAcquisitionStats()
+    acquisition_error: str | None = None
+    has_strong_local_match = bool(result.results and result.results[0].score >= payload.stop_score)
+    if not has_strong_local_match and container.nntp_providers is not None:
+        try:
+            acquisition = acquire_requested_book(
+                container.nntp_providers,
+                container.releases,
+                book,
+                client_factory=container.nntp_client_factory,
+                max_windows=payload.max_scan_windows,
+            )
+            if acquisition.headers_matched:
+                result = search_local()
+        except (NntpError, OSError, ValueError) as exc:
+            acquisition_error = f"{type(exc).__name__}: {exc}"[:512]
+
+    response = {
+        "queries": list(result.queries),
+        "stopped_early": result.stopped_early,
+        "acquisition": asdict(acquisition),
+        "results": [
+            {
+                "score": item.score,
+                "bucket": item.bucket,
+                "reasons": list(item.reasons),
+                "release": asdict(container.releases.get(item.candidate.id)),
+            }
+            for item in result.results
+            if container.releases.get(item.candidate.id) is not None
+        ],
+    }
+    if acquisition_error is not None:
+        response["acquisition_error"] = acquisition_error
+    return response
 
 
 @router.get("/releases/{release_id}", response_model=ReleaseDetailResponse)

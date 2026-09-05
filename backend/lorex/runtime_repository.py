@@ -59,7 +59,7 @@ class PostgresRuntimeRepository:
             values = {row.key: row.value for row in rows}
 
         return ScannerSettings(
-            enabled=self._parse_bool(values.get("scanner_enabled", "true")),
+            enabled=self._parse_bool(values.get("scanner_enabled", "false")),
             scan_interval_seconds=self._parse_interval(
                 values.get("scan_interval_seconds", str(self.DEFAULT_SCAN_INTERVAL_SECONDS))
             ),
