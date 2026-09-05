@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from lorex.db import create_engine_from_url
 from lorex.main import create_app
+from lorex.nntp.protocol import GroupInfo
 
 TEST_USERNAME = "fixture-user"
 TEST_PASSWORD = "fixture-value"
@@ -130,7 +131,7 @@ def test_secret_writes_fail_503_when_master_key_is_missing(monkeypatch):
         assert TEST_PASSWORD not in response.text
 
 
-def test_provider_connection_test_authenticates_and_checks_configured_group(monkeypatch):
+def test_provider_connection_test_authenticates_and_checks_configured_group_and_overview(monkeypatch):
     _reset_db()
     monkeypatch.setenv("LOREX_CREDENTIAL_KEY", _key())
     calls: list[tuple] = []
@@ -148,9 +149,13 @@ def test_provider_connection_test_authenticates_and_checks_configured_group(monk
         def authenticate(self, username: str, password: str) -> None:
             calls.append(("auth", username, password))
 
-        def group(self, name: str):
+        def group(self, name: str) -> GroupInfo:
             calls.append(("group", name))
-            return object()
+            return GroupInfo(count=100, low=1, high=100, name=name)
+
+        def xover(self, start: int, end: int):
+            calls.append(("xover", start, end))
+            return iter(())
 
     monkeypatch.setattr("lorex.api.nntp_settings.NntpClient", FakeClient, raising=False)
     with TestClient(create_app()) as client:
@@ -167,6 +172,7 @@ def test_provider_connection_test_authenticates_and_checks_configured_group(monk
         ("connect", "news.example.test", 563),
         ("auth", TEST_USERNAME, TEST_PASSWORD),
         ("group", "alt.binaries.audiobooks"),
+        ("xover", 100, 100),
     ]
     assert TEST_PASSWORD not in response.text
 

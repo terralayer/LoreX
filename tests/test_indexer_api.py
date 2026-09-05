@@ -32,6 +32,7 @@ def test_indexer_settings_and_scan_now_are_durable(client) -> None:
     assert patched.json()["enabled"] is False
     assert patched.json()["scan_interval_seconds"] == 60
 
+    client.app.state.container.runtime.heartbeat_scanner_worker()
     requested = client.post("/api/indexer/scan-now")
     assert requested.status_code == 202
     assert requested.json()["scan_request_token"] >= 1
@@ -42,6 +43,9 @@ def test_indexer_settings_and_scan_now_are_durable(client) -> None:
     assert payload["enabled"] is False
     assert payload["scan_interval_seconds"] == 60
     assert payload["scan_request_token"] == requested.json()["scan_request_token"]
+    assert payload["worker_online"] is True
+    assert payload["worker_last_heartbeat_at"] is not None
+    assert payload["worker_error"] is None
     assert len(payload["groups"]) == 1
     group = payload["groups"][0]
     assert group["provider_name"] == "Indexer API Provider"

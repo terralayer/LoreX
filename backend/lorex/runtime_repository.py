@@ -44,6 +44,8 @@ class PostgresRuntimeRepository:
     DEFAULT_SCAN_INTERVAL_SECONDS = 300
     MIN_SCAN_INTERVAL_SECONDS = 10
     MAX_SCAN_INTERVAL_SECONDS = 86_400
+    SCANNER_HEARTBEAT_KEY = "scanner_worker_heartbeat_at"
+    SCANNER_HEARTBEAT_TTL_SECONDS = 120
 
     def __init__(self, sessions: sessionmaker[Session]) -> None:
         self._sessions = sessions
@@ -93,6 +95,41 @@ class PostgresRuntimeRepository:
                 row.updated_at = now
             session.flush()
             return token
+
+    def heartbeat_scanner_worker(self) -> datetime:
+        now = datetime.now(UTC)
+        with self._sessions.begin() as session:
+            self._upsert_setting(session, self.SCANNER_HEARTBEAT_KEY, now.isoformat())
+        return now
+
+    def scanner_worker_heartbeat(self) -> datetime | None:
+        with self._sessions() as session:
+            row = session.get(RuntimeSettingRow, self.SCANNER_HEARTBEAT_KEY)
+            if row is None:
+                return None
+            value = row.value
+        try:
+            heartbeat = datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+        if heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=UTC)
+        return heartbeat.astimezone(UTC)
+
+    def scanner_worker_online(
+        self,
+        *,
+        now: datetime | None = None,
+        max_age_seconds: int | None = None,
+    ) -> bool:
+        heartbeat = self.scanner_worker_heartbeat()
+        if heartbeat is None:
+            return False
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=UTC)
+        max_age = self.SCANNER_HEARTBEAT_TTL_SECONDS if max_age_seconds is None else max(1, int(max_age_seconds))
+        return (current.astimezone(UTC) - heartbeat).total_seconds() <= max_age
 
     def mark_scan_started(self, provider_id: str, group_name: str) -> None:
         now = datetime.now(UTC)

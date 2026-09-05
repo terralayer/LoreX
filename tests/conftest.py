@@ -12,6 +12,13 @@ from lorex.db import create_engine_from_url
 from lorex.main import app
 
 
+@pytest.fixture(autouse=True)
+def disable_embedded_workers_by_default(monkeypatch):
+    # Production single-container deployments run embedded workers by default.
+    # Tests opt in explicitly when worker lifecycle behavior is under test.
+    monkeypatch.setenv("LOREX_EMBED_WORKERS", "0")
+
+
 @pytest.fixture
 def client(monkeypatch):
     # Legacy vertical-slice API tests intentionally exercise LoreX's explicit

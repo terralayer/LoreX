@@ -23,6 +23,14 @@ def _safe_error(provider, exc: Exception) -> str:
     return message[:2048]
 
 
+def _heartbeat(runtime_repository) -> None:
+    if runtime_repository is None:
+        return
+    heartbeat = getattr(runtime_repository, "heartbeat_scanner_worker", None)
+    if heartbeat is not None:
+        heartbeat()
+
+
 def run_pass(
     provider_repository,
     release_repository,
@@ -33,10 +41,12 @@ def run_pass(
 ) -> int:
     scanner = scan_fn or scan_provider_group_once
     successes = 0
+    _heartbeat(runtime_repository)
     for provider in provider_repository.list_enabled():
         for group in provider.groups:
             if not group.enabled:
                 continue
+            _heartbeat(runtime_repository)
             if runtime_repository is not None:
                 runtime_repository.mark_scan_started(provider.id, group.group_name)
             try:
@@ -51,6 +61,7 @@ def run_pass(
                         entity_id=provider.id,
                         detail=safe_error,
                     )
+                _heartbeat(runtime_repository)
                 continue
 
             successes += 1
@@ -67,6 +78,7 @@ def run_pass(
                     f"{stats.headers_received} headers, {stats.releases_indexed} releases",
                     entity_id=provider.id,
                 )
+            _heartbeat(runtime_repository)
     return successes
 
 
@@ -88,6 +100,7 @@ def run_forever(
     last_request_token = runtime_repository.scanner_settings().scan_request_token
 
     while not stop.is_set():
+        _heartbeat(runtime_repository)
         settings = runtime_repository.scanner_settings()
         now = monotonic()
         due = last_scan_at is None or now - last_scan_at >= settings.scan_interval_seconds
