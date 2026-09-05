@@ -11,6 +11,11 @@ from lorex.indexer.nzb import get_or_build_nzb
 from lorex.services.download_jobs import process_next_download as process_download_job
 from lorex.services.download_jobs import queue_release
 from lorex.services.indexing import index_headers
+from lorex.services.on_demand_search import (
+    BookSearchRequest,
+    SearchCandidate,
+    execute_on_demand_search,
+)
 from lorex.search import DownloadStatus, ImportStatus, ReleaseFormat, ReleaseSearchQuery, ReleaseSort, SortOrder
 
 router = APIRouter(prefix="/api", tags=["releases"])
@@ -59,6 +64,17 @@ class ReleaseDetailResponse(BaseModel):
     source_subject: str
 
 
+class OnDemandSearchRequest(BaseModel):
+    title: str
+    author: str | None = None
+    narrator: str | None = None
+    series: str | None = None
+    series_number: str | int | None = None
+    isbn: str | None = None
+    asin: str | None = None
+    stop_score: int = 95
+
+
 @router.post("/index/mock")
 def mock_index(payload: MockIndexRequest, request: Request) -> dict:
     container = request.app.state.container
@@ -96,6 +112,63 @@ def search_releases(
         )
     )
     return ReleaseSearchResponse(**asdict(page))
+
+
+@router.post("/search/on-demand")
+def on_demand_search(payload: OnDemandSearchRequest, request: Request) -> dict:
+    container = request.app.state.container
+    book = BookSearchRequest(
+        title=payload.title,
+        author=payload.author,
+        narrator=payload.narrator,
+        series=payload.series,
+        series_number=payload.series_number,
+        isbn=payload.isbn,
+        asin=payload.asin,
+    )
+
+    def provider(query: str):
+        page = container.releases.search_page(
+            ReleaseSearchQuery(q=query, limit=100, offset=0, sort="completion", order="desc")
+        )
+        candidates: list[SearchCandidate] = []
+        for summary in page.results:
+            release = container.releases.get(summary.id)
+            if release is None:
+                continue
+            candidates.append(
+                SearchCandidate(
+                    id=release.id,
+                    title=release.title,
+                    author=release.author,
+                    narrator=release.narrator,
+                    format=release.format,
+                    size=release.size,
+                    completion=release.completion,
+                    source_subject=release.source_subject,
+                )
+            )
+        return candidates
+
+    try:
+        result = execute_on_demand_search(book, provider, stop_score=payload.stop_score)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {
+        "queries": list(result.queries),
+        "stopped_early": result.stopped_early,
+        "results": [
+            {
+                "score": item.score,
+                "bucket": item.bucket,
+                "reasons": list(item.reasons),
+                "release": asdict(container.releases.get(item.candidate.id)),
+            }
+            for item in result.results
+            if container.releases.get(item.candidate.id) is not None
+        ],
+    }
 
 
 @router.get("/releases/{release_id}", response_model=ReleaseDetailResponse)
