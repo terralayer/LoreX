@@ -30,6 +30,17 @@ class TargetedScanStats:
     duplicate_releases: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class TargetedAcquisitionStats:
+    groups_searched: int = 0
+    windows_scanned: int = 0
+    headers_examined: int = 0
+    headers_matched: int = 0
+    releases_indexed: int = 0
+    releases_rejected: int = 0
+    duplicate_releases: int = 0
+
+
 def _default_client_factory(provider: NntpProvider) -> NntpClient:
     return NntpClient(provider.host, provider.port)
 
@@ -60,13 +71,7 @@ def subject_matches_request(subject: str, request: BookSearchRequest) -> bool:
     # Short titles need an exact token match; longer titles tolerate one missing
     # token because Usenet release names frequently abbreviate punctuation/subtitles.
     minimum = len(required) if len(required) <= 2 else max(2, len(required) - 1)
-    if matched < minimum:
-        return False
-
-    # Author evidence is useful when present, but is not mandatory because many
-    # audiobook posts omit it entirely. A conflicting/missing author therefore
-    # cannot reject otherwise strong title evidence.
-    return True
+    return matched >= minimum
 
 
 def scan_requested_book_group(
@@ -145,3 +150,40 @@ def scan_requested_book_group(
         releases_rejected=indexing.releases_rejected,
         duplicate_releases=indexing.duplicate_releases,
     )
+
+
+def acquire_requested_book(
+    provider_repository,
+    release_repository,
+    request: BookSearchRequest,
+    *,
+    client_factory: Callable[[NntpProvider], _TargetedClient] | None = None,
+    max_windows: int = 8,
+) -> TargetedAcquisitionStats:
+    """Search enabled audiobook groups and retain only headers for this request."""
+
+    totals = TargetedAcquisitionStats()
+    for provider in provider_repository.list_enabled():
+        for group in provider.groups:
+            if not group.enabled:
+                continue
+            kwargs = {"max_windows": max_windows}
+            if client_factory is not None:
+                kwargs["client_factory"] = client_factory
+            stats = scan_requested_book_group(
+                provider,
+                group,
+                release_repository,
+                request,
+                **kwargs,
+            )
+            totals = TargetedAcquisitionStats(
+                groups_searched=totals.groups_searched + 1,
+                windows_scanned=totals.windows_scanned + stats.windows_scanned,
+                headers_examined=totals.headers_examined + stats.headers_examined,
+                headers_matched=totals.headers_matched + stats.headers_matched,
+                releases_indexed=totals.releases_indexed + stats.releases_indexed,
+                releases_rejected=totals.releases_rejected + stats.releases_rejected,
+                duplicate_releases=totals.duplicate_releases + stats.duplicate_releases,
+            )
+    return totals
