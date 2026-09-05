@@ -199,8 +199,8 @@ class PostgresRuntimeRepository:
             "updated_at": now,
         }
         with self._sessions.begin() as session:
-            statement = pg_insert(RuntimeSettingRow) if False else pg_insert(ScannerGroupStateRow)
-            statement = statement.values(values).on_conflict_do_update(
+            statement = pg_insert(ScannerGroupStateRow).values(values)
+            statement = statement.on_conflict_do_update(
                 index_elements=[ScannerGroupStateRow.provider_id, ScannerGroupStateRow.group_name],
                 set_={"status": "error", "last_error": safe_error, "updated_at": now},
             )
