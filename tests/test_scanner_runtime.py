@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from threading import Event
+from time import sleep
 
 from lorex.nntp.models import NntpProvider, NntpProviderGroup
 from lorex.nntp.scanner import ScanStats
@@ -43,11 +44,12 @@ class StopAfterOneWait(Event):
 
 
 class HeartbeatRuntime:
-    def __init__(self):
+    def __init__(self, *, enabled: bool = False):
+        self.enabled = enabled
         self.heartbeats: list[str] = []
 
     def scanner_settings(self):
-        return ScannerSettings(enabled=False, scan_interval_seconds=300, scan_request_token=0)
+        return ScannerSettings(enabled=self.enabled, scan_interval_seconds=300, scan_request_token=0)
 
     def touch_worker_heartbeat(self, worker_name: str):
         self.heartbeats.append(worker_name)
@@ -103,4 +105,29 @@ def test_scanner_worker_publishes_heartbeat_even_when_scanning_is_disabled() -> 
         poll_seconds=0.1,
     )
 
-    assert runtime.heartbeats == ["nntp-scanner"]
+    assert runtime.heartbeats
+    assert set(runtime.heartbeats) == {"nntp-scanner"}
+
+
+def test_scanner_heartbeat_continues_while_scan_pass_is_busy(monkeypatch) -> None:
+    runtime = HeartbeatRuntime(enabled=True)
+    stop = Event()
+
+    def slow_scan_pass(*args, **kwargs):
+        sleep(0.12)
+        stop.set()
+        return 1
+
+    monkeypatch.setattr("lorex.workers.nntp_scanner.run_pass", slow_scan_pass)
+
+    run_forever(
+        provider_repository=object(),
+        release_repository=object(),
+        runtime_repository=runtime,
+        stop_event=stop,
+        poll_seconds=0.1,
+        heartbeat_seconds=0.02,
+    )
+
+    assert len(runtime.heartbeats) >= 3
+    assert set(runtime.heartbeats) == {"nntp-scanner"}
