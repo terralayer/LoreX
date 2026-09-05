@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/indexer", tags=["indexer"])
+SCANNER_WORKER_NAME = "nntp-scanner"
 
 
 class IndexerSettingsPatch(BaseModel):
@@ -37,6 +38,9 @@ class IndexerGroupStatus(BaseModel):
 
 
 class IndexerStatusResponse(IndexerSettingsResponse):
+    worker_online: bool
+    worker_last_heartbeat_at: datetime | None
+    worker_error: str | None
     groups: list[IndexerGroupStatus]
 
 
@@ -59,10 +63,22 @@ def _providers(request: Request):
     return providers
 
 
+def _worker_health(request: Request) -> tuple[bool, datetime | None, str | None]:
+    runtime = _runtime(request)
+    heartbeat = runtime.worker_heartbeat(SCANNER_WORKER_NAME)
+    online = runtime.worker_is_online(SCANNER_WORKER_NAME)
+    if not getattr(request.app.state.container, "credential_key_available", False):
+        return False, heartbeat, "LOREX_CREDENTIAL_KEY is not configured"
+    if not online:
+        return False, heartbeat, "Scanner worker is offline"
+    return True, heartbeat, None
+
+
 @router.get("/status", response_model=IndexerStatusResponse)
 def indexer_status(request: Request) -> IndexerStatusResponse:
     runtime = _runtime(request)
     settings = runtime.scanner_settings()
+    worker_online, worker_last_heartbeat_at, worker_error = _worker_health(request)
     state_by_key = {(item.provider_id, item.group_name.casefold()): item for item in runtime.scanner_states()}
 
     groups: list[IndexerGroupStatus] = []
@@ -93,6 +109,9 @@ def indexer_status(request: Request) -> IndexerStatusResponse:
         enabled=settings.enabled,
         scan_interval_seconds=settings.scan_interval_seconds,
         scan_request_token=settings.scan_request_token,
+        worker_online=worker_online,
+        worker_last_heartbeat_at=worker_last_heartbeat_at,
+        worker_error=worker_error,
         groups=groups,
     )
 
@@ -119,5 +138,17 @@ def update_indexer_settings(payload: IndexerSettingsPatch, request: Request) -> 
 
 @router.post("/scan-now", status_code=status.HTTP_202_ACCEPTED, response_model=ScanNowResponse)
 def request_scan_now(request: Request) -> ScanNowResponse:
-    token = _runtime(request).request_scan_now()
+    runtime = _runtime(request)
+    settings = runtime.scanner_settings()
+    if not settings.enabled:
+        raise HTTPException(status_code=409, detail="Indexer is disabled")
+
+    worker_online, _heartbeat, worker_error = _worker_health(request)
+    if not worker_online:
+        detail = "Scanner worker is offline"
+        if worker_error and worker_error != detail:
+            detail = f"{detail}: {worker_error}"
+        raise HTTPException(status_code=503, detail=detail)
+
+    token = runtime.request_scan_now()
     return ScanNowResponse(status="requested", scan_request_token=token)
