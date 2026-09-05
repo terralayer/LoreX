@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import signal
 from collections.abc import Callable
-from threading import Event
+from threading import Event, Thread
 from time import monotonic
 
 from lorex.db import create_engine_from_url, database_url_from_env, session_factory
@@ -77,6 +77,18 @@ def run_once(provider_repository, release_repository, *, mode: str = "live") -> 
     return run_pass(provider_repository, release_repository, mode=mode)
 
 
+def _heartbeat_loop(runtime_repository, stop_event: Event, heartbeat_seconds: float) -> None:
+    interval = max(0.1, min(float(heartbeat_seconds), 60.0))
+    while not stop_event.is_set():
+        try:
+            runtime_repository.touch_worker_heartbeat(SCANNER_WORKER_NAME)
+        except Exception:
+            # Heartbeat storage can fail transiently with the database. Keep retrying;
+            # the API will correctly report the worker offline until a write succeeds.
+            pass
+        stop_event.wait(interval)
+
+
 def run_forever(
     provider_repository,
     release_repository,
@@ -85,29 +97,42 @@ def run_forever(
     mode: str = "live",
     stop_event: Event | None = None,
     poll_seconds: float = 1.0,
+    heartbeat_seconds: float = 1.0,
 ) -> None:
     stop = stop_event or Event()
+    heartbeat_stop = Event()
+    heartbeat_thread = Thread(
+        target=_heartbeat_loop,
+        args=(runtime_repository, heartbeat_stop, heartbeat_seconds),
+        name="lorex-nntp-scanner-heartbeat",
+        daemon=True,
+    )
+    heartbeat_thread.start()
+
     last_scan_at: float | None = None
     last_request_token = runtime_repository.scanner_settings().scan_request_token
 
-    while not stop.is_set():
-        runtime_repository.touch_worker_heartbeat(SCANNER_WORKER_NAME)
-        settings = runtime_repository.scanner_settings()
-        now = monotonic()
-        due = last_scan_at is None or now - last_scan_at >= settings.scan_interval_seconds
-        manually_requested = settings.scan_request_token != last_request_token
+    try:
+        while not stop.is_set():
+            settings = runtime_repository.scanner_settings()
+            now = monotonic()
+            due = last_scan_at is None or now - last_scan_at >= settings.scan_interval_seconds
+            manually_requested = settings.scan_request_token != last_request_token
 
-        if settings.enabled and (due or manually_requested):
-            run_pass(
-                provider_repository,
-                release_repository,
-                runtime_repository,
-                mode=mode,
-            )
-            last_scan_at = monotonic()
-            last_request_token = runtime_repository.scanner_settings().scan_request_token
+            if settings.enabled and (due or manually_requested):
+                run_pass(
+                    provider_repository,
+                    release_repository,
+                    runtime_repository,
+                    mode=mode,
+                )
+                last_scan_at = monotonic()
+                last_request_token = runtime_repository.scanner_settings().scan_request_token
 
-        stop.wait(max(0.1, min(float(poll_seconds), 1.0)))
+            stop.wait(max(0.1, min(float(poll_seconds), 1.0)))
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=max(1.0, min(float(heartbeat_seconds), 60.0) + 1.0))
 
 
 def main(argv: list[str] | None = None) -> int:
