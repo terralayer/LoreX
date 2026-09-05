@@ -43,12 +43,12 @@ def test_runtime_settings_have_safe_defaults_and_persist_updates() -> None:
     engine, repo = _repository()
     try:
         settings = repo.scanner_settings()
-        assert settings.enabled is True
+        assert settings.enabled is False
         assert settings.scan_interval_seconds == 300
         assert settings.scan_request_token == 0
 
-        updated = repo.update_scanner_settings(enabled=False, scan_interval_seconds=42)
-        assert updated.enabled is False
+        updated = repo.update_scanner_settings(enabled=True, scan_interval_seconds=42)
+        assert updated.enabled is True
         assert updated.scan_interval_seconds == 42
         assert repo.scanner_settings() == updated
 
