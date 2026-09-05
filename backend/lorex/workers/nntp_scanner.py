@@ -78,7 +78,7 @@ def run_once(provider_repository, release_repository, *, mode: str = "live") -> 
 
 
 def _heartbeat_loop(runtime_repository, stop_event: Event, heartbeat_seconds: float) -> None:
-    interval = max(0.1, min(float(heartbeat_seconds), 60.0))
+    interval = max(0.01, min(float(heartbeat_seconds), 60.0))
     while not stop_event.is_set():
         try:
             runtime_repository.touch_worker_heartbeat(SCANNER_WORKER_NAME)
