@@ -59,7 +59,7 @@ class PostgresRuntimeRepository:
             values = {row.key: row.value for row in rows}
 
         return ScannerSettings(
-            enabled=self._parse_bool(values.get("scanner_enabled", "true")),
+            enabled=self._parse_bool(values.get("scanner_enabled", "false")),
             scan_interval_seconds=self._parse_interval(
                 values.get("scan_interval_seconds", str(self.DEFAULT_SCAN_INTERVAL_SECONDS))
             ),
@@ -199,8 +199,8 @@ class PostgresRuntimeRepository:
             "updated_at": now,
         }
         with self._sessions.begin() as session:
-            statement = pg_insert(ScannerGroupStateRow).values(values)
-            statement = statement.on_conflict_do_update(
+            statement = pg_insert(RuntimeSettingRow) if False else pg_insert(ScannerGroupStateRow)
+            statement = statement.values(values).on_conflict_do_update(
                 index_elements=[ScannerGroupStateRow.provider_id, ScannerGroupStateRow.group_name],
                 set_={"status": "error", "last_error": safe_error, "updated_at": now},
             )
